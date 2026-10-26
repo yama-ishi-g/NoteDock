@@ -1,7 +1,9 @@
-import { ArrowLeft, BookOpen, FlaskConical, HardDrive, Share, ShieldCheck } from 'lucide-react'
+import { ArrowLeft, BookOpen, FlaskConical, HardDrive, History, Share, ShieldCheck } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { exportAllZip } from '../io/projectZip'
 import { shareFile } from '../io/share'
+import { isDevChannel } from '../lib/channel'
+import { CHANGELOG } from '../lib/changelog'
 import { formatBuildLabel } from '../lib/version'
 import { markBackedUp } from '../services/appData'
 import { createHowToProject } from '../services/howto'
@@ -113,10 +115,23 @@ export default function SettingsScreen({ back }: { back: View }) {
             <span>バージョン</span>
             <span className="muted">{formatBuildLabel()}</span>
           </div>
-          <div className="setting-row">
-            <span>実機検証ページ</span>
-            <a className="btn" href="#lab"><FlaskConical size={16} /> 開く</a>
-          </div>
+          {/* 実機検証ページは開発版だけに出す */}
+          {isDevChannel && (
+            <div className="setting-row">
+              <span>実機検証ページ</span>
+              <a className="btn" href="#lab"><FlaskConical size={16} /> 開く</a>
+            </div>
+          )}
+          {/* 履歴は増えていくため、全体も各版も折りたたんでおく */}
+          <details className="changelog">
+            <summary><History size={16} /> バージョンアップ履歴</summary>
+            {CHANGELOG.map((v) => (
+              <details key={v.version} className="changelog-entry">
+                <summary>v{v.version}<span className="muted">（{v.date.replaceAll('-', '/')}）</span></summary>
+                <ul>{v.changes.map((c) => <li key={c}>{c}</li>)}</ul>
+              </details>
+            ))}
+          </details>
           {errors.length > 0 && (
             <details>
               <summary className="muted">最近のエラー（{errors.length}件）</summary>

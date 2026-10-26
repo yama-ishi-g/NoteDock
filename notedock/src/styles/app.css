@@ -384,6 +384,12 @@ button {
 .setting-control .value { min-width: 3em; text-align: right; }
 .setting-row input[type='checkbox'] { width: 22px; height: 22px; }
 .error-log { font-family: var(--mono); font-size: 12px; white-space: pre-wrap; background: var(--surface); padding: 8px; border-radius: var(--radius); }
+.changelog { margin-top: 4px; }
+.changelog > summary { padding: 10px 0; cursor: pointer; }
+.changelog > summary svg { vertical-align: -3px; margin-right: 4px; }
+.changelog-entry { margin: 0 0 6px 22px; }
+.changelog-entry > summary { padding: 6px 0; cursor: pointer; font-weight: 600; }
+.changelog-entry ul { margin: 4px 0 8px; padding-left: 20px; line-height: 1.6; }
 
 .fatal { padding: 40px 24px; text-align: center; }
 
