@@ -1,4 +1,4 @@
-import { eraserPath, eraseStrokes, lassoSelect, shouldSnapLine, toLine, translateStroke } from './geometry'
+import { eraserPath, eraseStrokes, lassoSelect, shouldSnapLine, strokesInRect, toLine, transformStroke, translateStroke } from './geometry'
 import { InkHistory } from './history'
 import type { AssetResolver } from './assets'
 import { fontSizeFor, newImageItem, newTextItem, type InkItem } from './items'
@@ -64,6 +64,10 @@ const TOUCH_FALLBACK_ID = -1
 /** Pencil の touchstart から pointerdown を待つ時間 */
 const FALLBACK_WAIT_MS = 50
 
+type ItemRect = { x: number; y: number; w: number; h: number }
+
+const rectOf = (i: InkItem): ItemRect => ({ x: i.x, y: i.y, w: i.w, h: i.type === 'image' ? i.h : 0 })
+
 type StylusTouch = { id: number; pointerSeen: boolean; buffer: Touch[]; timer: number }
 
 // touch イベントを Pointer Events の代わりに使うための、最低限の形
@@ -77,10 +81,13 @@ const stylusIn = (list: TouchList) => [...list].find((t) => (t as Touch & { touc
 type Gesture =
   | { kind: 'draw'; pointerId: number; type: string; stroke: Stroke; start: number; anchor: Point; lastMoveAt: number; flashUntil: number }
   | { kind: 'erase'; pointerId: number; type: string; before: InkContent; last: Point | null; changed: boolean }
-  | { kind: 'itemMove'; pointerId: number; type: string; id: string; start: Point; orig: { x: number; y: number }; moved: boolean; wasSelected: boolean; before: InkContent; client: Point }
-  | { kind: 'itemResize'; pointerId: number; type: string; id: string; start: Point; orig: { w: number; h: number }; before: InkContent; client: Point }
+  // attached: 画像の上に描いた線（動かす前のもの）。画像と一緒に動かす
+  | { kind: 'itemMove'; pointerId: number; type: string; id: string; start: Point; orig: ItemRect; moved: boolean; wasSelected: boolean; before: InkContent; attached: Stroke[] }
+  | { kind: 'itemResize'; pointerId: number; type: string; id: string; start: Point; orig: ItemRect; before: InkContent; attached: Stroke[] }
   /** 置いたものを指2本で動かす（画像はピンチで大きさも変える）。a・b は2本の指の画面座標 */
-  | { kind: 'itemPinch'; pointerId: number; second: number; type: string; id: string; a0: Point; b0: Point; a: Point; b: Point; orig: { x: number; y: number; w: number; h: number }; before: InkContent }
+  | { kind: 'itemPinch'; pointerId: number; second: number; type: string; id: string; a0: Point; b0: Point; a: Point; b: Point; orig: ItemRect; before: InkContent; attached: Stroke[] }
+  /** テキストボックスの編集中に、文字ツールで指が触れた（2本目が来れば指2本の操作、離せばタップとして扱う） */
+  | { kind: 'touchWait'; pointerId: number; type: string; down: PointerEvent; start: Point }
   | { kind: 'lasso'; pointerId: number; type: string; polygon: Point[] }
   | { kind: 'move'; pointerId: number; type: string; start: Point; dx: number; dy: number }
   | { kind: 'pan'; pointerId: number; last: { x: number; y: number }; samples: { t: number; dx: number; dy: number }[] }
@@ -103,8 +110,8 @@ export class InkEngine {
   /** テキストボックスを編集し始めたときの内容（編集が終わったら履歴に記録する） */
   private editBefore: InkContent | null = null
   private editingId: string | null = null
-  /** 触れている指（テキストボックスの編集中に指2本で動かすとき、2本目を手書き面の操作にしないため） */
-  private touchIds = new Set<number>()
+  /** 触れている指の画面座標（指2本の操作に使う。編集中の入力欄に触れている指も含む） */
+  private touches = new Map<number, Point>()
   private history = new InkHistory<InkContent>()
   private gesture: Gesture | null = null
   private selection: Selection | null = null
@@ -508,15 +515,14 @@ export class InkEngine {
       if (this.gesture?.kind === 'pan') this.gesture = null
     }
     if (e.pointerType === 'touch') {
-      const others = this.touchIds.size
-      this.touchIds.add(e.pointerId)
-      // 編集中の2本目の指は、テキストボックスを動かす操作（ItemsOverlay）に使う
-      if (this.editingId && others > 0) {
-        e.stopPropagation()
+      this.touches.set(e.pointerId, { x: e.clientX, y: e.clientY })
+      if (this.touches.size >= 2 && this.startTwoFinger(e, true)) return
+      // 編集中に文字ツールで触れた指は、すぐには新しいテキストボックスを作らない（2本目の指で動かすことがあるため）
+      if (!this.gesture && this.editingId && this.tool === 'text') {
+        this.gesture = { kind: 'touchWait', pointerId: e.pointerId, type: 'touch', down: e, start: { x: e.clientX, y: e.clientY } }
         return
       }
     }
-    if (this.startItemPinch(e)) return
     if (this.gesture) return
     // 指はスクロールに使うことがあるため、編集はペン・マウスで触れたときだけ終える（指で別の所に置くときは onItemDown で終える）
     if (e.pointerType !== 'touch') this.finishTextEdit()
@@ -606,32 +612,75 @@ export class InkEngine {
     this.capture(e.pointerId)
     const wasSelected = this.selectedItem === item.id
     this.selectItem(item.id)
+    const orig = rectOf(item)
+    const attached = this.attachedStrokes(item)
     if (hit?.handle && wasSelected) {
-      this.gesture = { kind: 'itemResize', pointerId: e.pointerId, type: e.pointerType, id: item.id, start: p, orig: { w: item.w, h: item.type === 'image' ? item.h : 0 }, before: this.content, client: { x: e.clientX, y: e.clientY } }
+      this.gesture = { kind: 'itemResize', pointerId: e.pointerId, type: e.pointerType, id: item.id, start: p, orig, before: this.content, attached }
     } else {
-      this.gesture = { kind: 'itemMove', pointerId: e.pointerId, type: e.pointerType, id: item.id, start: p, orig: { x: item.x, y: item.y }, moved: false, wasSelected, before: this.content, client: { x: e.clientX, y: e.clientY } }
+      this.gesture = { kind: 'itemMove', pointerId: e.pointerId, type: e.pointerType, id: item.id, start: p, orig, moved: false, wasSelected, before: this.content, attached }
     }
     // PDF・画像の表示側（ZoomViewport）にスクロール・ピンチをさせない
     if (e.pointerType === 'touch') e.stopPropagation()
     return true
   }
 
-  /** 置いたものを指で動かしている途中に、2本目の指が触れたら、指2本の操作にする */
-  private startItemPinch(e: PointerEvent): boolean {
+  /** 画像の上に描いた線（点の半分以上が画像の中にある線）。画像と一緒に動かす */
+  private attachedStrokes(item: InkItem): Stroke[] {
+    return item.type === 'image' ? strokesInRect(this.strokes, { x: item.x, y: item.y, width: item.w, height: item.h }) : []
+  }
+
+  /** 置いたものを next の位置・大きさにし、一緒に動かす線も合わせる */
+  private placeItem(id: string, orig: ItemRect, next: ItemRect, attached: Stroke[]) {
+    this.items = this.items.map((i) => (i.id !== id ? i : i.type === 'image' ? { ...i, ...next } : { ...i, x: next.x, y: next.y, w: next.w }))
+    if (attached.length) {
+      const k = orig.w ? next.w / orig.w : 1
+      const moved = new Map(attached.map((s) => [s.id, transformStroke(s, orig.x, orig.y, next.x, next.y, k)]))
+      this.strokes = this.strokes.map((s) => moved.get(s.id) ?? s)
+      this.invalidate()
+    }
+    this.emitItems()
+  }
+
+  /**
+   * 2本目の指が触れたとき、どちらかの指が置いたものに触れていれば（テキストボックスの編集中は常に）、
+   * 指2本でそれを動かす操作にする（画像はピンチで拡大縮小）。どのツールでも使える
+   */
+  private startTwoFinger(e: PointerEvent, onHost: boolean): boolean {
+    if (this.opts.readOnly() || performance.now() - this.lastPenTime < PALM_MS) return false
+    const ids = [...this.touches.keys()].slice(-2)
+    if (ids.length < 2) return false
+    const [pa, pb] = ids.map((id) => this.touches.get(id)!)
     const g = this.gesture
-    if (!g || (g.kind !== 'itemMove' && g.kind !== 'itemResize') || g.type !== 'touch' || e.pointerType !== 'touch') return false
-    const item = this.items.find((i) => i.id === g.id)
+    let item: InkItem | undefined
+    if (this.editingId) item = this.items.find((i) => i.id === this.editingId)
+    else if (g && (g.kind === 'itemMove' || g.kind === 'itemResize') && g.type === 'touch') item = this.items.find((i) => i.id === g.id)
+    else {
+      const hit = this.opts.hitTestItem?.(pa.x, pa.y) ?? this.opts.hitTestItem?.(pb.x, pb.y) ?? null
+      item = hit ? this.items.find((i) => i.id === hit.id) : undefined
+    }
     if (!item) return false
+    // 指1本で始めていた操作はやめる（描いていた線は捨て、消した線は戻す）
+    let before = this.content
+    let attached: Stroke[] | null = null
+    if (g && (g.kind === 'itemMove' || g.kind === 'itemResize')) {
+      // 指1本で動かした分はそのままにして、続けて動かす
+      before = g.before
+      const ids = new Set(g.attached.map((s) => s.id))
+      attached = this.strokes.filter((s) => ids.has(s.id))
+    } else if (g?.kind === 'erase' && g.changed) {
+      this.strokes = g.before.strokes
+      before = g.before
+    }
+    const current = item
+    this.stopInertia()
     e.preventDefault()
     e.stopPropagation()
-    this.capture(e.pointerId)
-    const b = { x: e.clientX, y: e.clientY }
-    this.gesture = {
-      kind: 'itemPinch', pointerId: g.pointerId, second: e.pointerId, type: 'touch', id: item.id,
-      a0: g.client, b0: b, a: g.client, b,
-      orig: { x: item.x, y: item.y, w: item.w, h: item.type === 'image' ? item.h : 0 },
-      before: g.before,
-    }
+    if (onHost) this.capture(e.pointerId)
+    // PDF・画像の表示側（ZoomViewport）に、始めていたスクロール・ピンチをやめさせる
+    this.host.dispatchEvent(new CustomEvent('ink-item-gesture', { bubbles: true }))
+    this.gesture = { kind: 'itemPinch', pointerId: ids[0], second: ids[1], type: 'touch', id: current.id, a0: pa, b0: pb, a: pa, b: pb, orig: rectOf(current), before, attached: attached ?? this.attachedStrokes(current) }
+    this.emitItems()
+    this.invalidate()
     return true
   }
 
@@ -645,30 +694,47 @@ export class InkEngine {
     const c0 = { x: (m0.x - r.left) / this.scale, y: (m0.y - r.top) / this.scale }
     const dx = (m.x - m0.x) / this.scale
     const dy = (m.y - m0.y) / this.scale
-    this.items = this.items.map((i) => {
-      if (i.id !== g.id) return i
-      if (i.type !== 'image') return { ...i, x: g.orig.x + dx, y: g.orig.y + dy }
-      const min = 48 / this.scale
-      const s = Math.max(min / g.orig.w, Math.hypot(g.a.x - g.b.x, g.a.y - g.b.y) / d0)
-      return { ...i, x: c0.x + (g.orig.x - c0.x) * s + dx, y: c0.y + (g.orig.y - c0.y) * s + dy, w: g.orig.w * s, h: g.orig.h * s }
-    })
-    this.emitItems()
+    const item = this.items.find((i) => i.id === g.id)
+    if (!item) return
+    if (item.type !== 'image') {
+      this.placeItem(g.id, g.orig, { ...g.orig, x: g.orig.x + dx, y: g.orig.y + dy }, g.attached)
+      return
+    }
+    const min = 48 / this.scale
+    const s = Math.max(min / g.orig.w, Math.hypot(g.a.x - g.b.x, g.a.y - g.b.y) / d0)
+    this.placeItem(g.id, g.orig, { x: c0.x + (g.orig.x - c0.x) * s + dx, y: c0.y + (g.orig.y - c0.y) * s + dy, w: g.orig.w * s, h: g.orig.h * s }, g.attached)
   }
 
-  /** 手書き面の外（編集中の入力欄）に触れている指を知らせる（2本目の指を手書き面の操作にしないため） */
-  noteTouch(pointerId: number, down: boolean) {
-    if (down) this.touchIds.add(pointerId)
-    else this.touchIds.delete(pointerId)
+  private endItemPinch(g: Extract<Gesture, { kind: 'itemPinch' }>) {
+    this.gesture = null
+    // 編集中のテキストボックスは、編集を終えたときに文字の変更とまとめて履歴に記録する
+    if (g.id === this.editingId) return
+    this.history.record(g.before)
+    this.emitHistory()
+    this.opts.onChange(this.strokes, this.items)
   }
 
-  /** 位置を変える（テキストボックスの編集中に指2本で動かすとき。履歴は編集の終了時にまとめて記録する） */
-  setItemPosition(id: string, x: number, y: number) {
-    this.items = this.items.map((i) => (i.id === id ? { ...i, x, y } : i))
-    this.emitItems()
+  /**
+   * 手書き面の外（編集中の入力欄）に触れている指を知らせる。
+   * その指と手書き面の指の2本で、テキストボックスを動かせるようにする
+   */
+  externalTouch(e: PointerEvent) {
+    if (e.pointerType !== 'touch') return
+    if (e.type === 'pointerdown') {
+      this.touches.set(e.pointerId, { x: e.clientX, y: e.clientY })
+      if (this.touches.size >= 2) {
+        // 文字ツールで待っていた指（タップ扱い）は取りやめる
+        if (this.gesture?.kind === 'touchWait') this.gesture = null
+        this.startTwoFinger(e, false)
+      }
+    } else if (e.type === 'pointermove') this.onMove(e)
+    else if (e.type === 'pointerup') this.onUp(e)
+    else this.onCancel(e)
   }
 
   private onMove = (e: PointerEvent) => {
     if (e.pointerType === 'pen') this.lastPenTime = performance.now()
+    if (e.pointerType === 'touch' && this.touches.has(e.pointerId)) this.touches.set(e.pointerId, { x: e.clientX, y: e.clientY })
     const g = this.gesture
     if (g?.kind === 'itemPinch') {
       if (e.pointerId === g.pointerId) g.a = { x: e.clientX, y: e.clientY }
@@ -678,23 +744,24 @@ export class InkEngine {
       return
     }
     if (!g || g.pointerId !== e.pointerId) return
+    if (g.kind === 'touchWait') {
+      // 指1本のまま動かしたら、スクロールにする
+      if (Math.hypot(e.clientX - g.start.x, e.clientY - g.start.y) > 8) {
+        this.gesture = this.opts.touchPan !== false ? { kind: 'pan', pointerId: e.pointerId, last: { x: e.clientX, y: e.clientY }, samples: [] } : null
+      }
+      return
+    }
     if (g.kind === 'itemMove' || g.kind === 'itemResize') {
-      g.client = { x: e.clientX, y: e.clientY }
       const p = this.toLogical(e)
       const dx = p.x - g.start.x
       const dy = p.y - g.start.y
       if (g.kind === 'itemMove') {
         if (Math.hypot(dx, dy) * this.scale > 4) g.moved = true
-        if (g.moved) this.items = this.items.map((i) => (i.id === g.id ? { ...i, x: g.orig.x + dx, y: g.orig.y + dy } : i))
+        if (g.moved) this.placeItem(g.id, g.orig, { ...g.orig, x: g.orig.x + dx, y: g.orig.y + dy }, g.attached)
       } else {
-        const min = 24 / this.scale
-        this.items = this.items.map((i) => {
-          if (i.id !== g.id) return i
-          const w = Math.max(min * 2, g.orig.w + dx)
-          return i.type === 'image' ? { ...i, w, h: (w * g.orig.h) / g.orig.w } : { ...i, w }
-        })
+        const w = Math.max(48 / this.scale, g.orig.w + dx)
+        this.placeItem(g.id, g.orig, { ...g.orig, w, h: g.orig.w ? (w * g.orig.h) / g.orig.w : g.orig.h }, g.attached)
       }
-      this.emitItems()
       return
     }
     const events = e.getCoalescedEvents?.() ?? []
@@ -750,19 +817,23 @@ export class InkEngine {
   }
 
   private onUp = (e: PointerEvent) => {
-    this.touchIds.delete(e.pointerId)
+    this.touches.delete(e.pointerId)
     const g = this.gesture
     // 指2本の操作は、どちらかの指を離したら終える（残った指では動かさない）
     if (g?.kind === 'itemPinch' && (e.pointerId === g.pointerId || e.pointerId === g.second)) {
-      this.gesture = null
-      this.history.record(g.before)
-      this.emitHistory()
-      this.opts.onChange(this.strokes, this.items)
+      this.endItemPinch(g)
       return
     }
     if (!g || g.pointerId !== e.pointerId) return
     this.gesture = null
     switch (g.kind) {
+      case 'touchWait': {
+        // 動かさずに離した: 文字ツールのタップとして扱う（新しいテキストボックス、または別のテキストボックスの編集）
+        this.onItemDown(g.down)
+        const next = this.gesture as Gesture | null
+        if (next?.pointerId === g.pointerId) this.gesture = null
+        return
+      }
       case 'pan':
         this.startInertia(g.samples)
         return
@@ -810,13 +881,16 @@ export class InkEngine {
   }
 
   private onCancel = (e: PointerEvent) => {
-    this.touchIds.delete(e.pointerId)
+    this.touches.delete(e.pointerId)
     const g = this.gesture
-    if (g?.kind === 'itemPinch' && e.pointerId === g.second) return this.onUp(e)
+    if (g?.kind === 'itemPinch' && (e.pointerId === g.pointerId || e.pointerId === g.second)) {
+      this.endItemPinch(g)
+      return
+    }
     if (!g || g.pointerId !== e.pointerId) return
     this.gesture = null
     // 消しゴム・移動の途中で取り消されたら、そこまでの分は残して履歴に記録する
-    if ((g.kind === 'erase' && g.changed) || (g.kind === 'itemMove' && g.moved) || g.kind === 'itemResize' || g.kind === 'itemPinch') {
+    if ((g.kind === 'erase' && g.changed) || (g.kind === 'itemMove' && g.moved) || g.kind === 'itemResize') {
       this.history.record(g.before)
       this.emitHistory()
       this.opts.onChange(this.strokes, this.items)

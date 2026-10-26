@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { densify, eraseStroke, eraseStrokes, eraserPath, lassoSelect, pointInPolygon, shouldSnapLine, toLine, translateStroke } from './geometry'
+import { densify, eraseStroke, eraseStrokes, eraserPath, lassoSelect, pointInPolygon, shouldSnapLine, strokesInRect, toLine, transformStroke, translateStroke } from './geometry'
 import { InkHistory } from './history'
 import { roundStroke, type Stroke } from './model'
 
@@ -110,5 +110,18 @@ describe('InkHistory', () => {
 describe('roundStroke', () => {
   it('座標・筆圧・時刻を丸める', () => {
     expect(roundStroke({ ...line(0, 0, 0, 0), points: [1.23456, 2.5, 0.123456, 10.6] }).points).toEqual([1.23, 2.5, 0.123, 11])
+  })
+})
+
+describe('画像と一緒に動かす線', () => {
+  it('点の半分以上が画像の中にある線だけを選ぶ', () => {
+    const strokes = [line(10, 10, 90, 10, 'in'), line(50, 50, 250, 50, 'half'), line(150, 150, 300, 150, 'out')]
+    expect(strokesInRect(strokes, { x: 0, y: 0, width: 100, height: 100 }).map((s) => s.id)).toEqual(['in', 'half'])
+  })
+
+  it('画像の左上を基準に、動かして拡大する（太さも）', () => {
+    const s = transformStroke({ ...line(10, 20, 30, 20), size: 4 }, 0, 0, 100, 50, 2)
+    expect([s.points[0], s.points[1]]).toEqual([120, 90])
+    expect(s.size).toBe(8)
   })
 })

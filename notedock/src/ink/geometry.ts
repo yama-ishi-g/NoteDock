@@ -129,3 +129,29 @@ export function toLine(points: number[]): number[] {
   const n = points.length
   return [points[0], points[1], avg, points[3], points[n - 4], points[n - 3], avg, points[n - 1]]
 }
+
+/** 矩形の中に点の半分以上がある線（置いた画像の上に描いた図。画像と一緒に動かすため） */
+export function strokesInRect(strokes: Stroke[], r: { x: number; y: number; width: number; height: number }): Stroke[] {
+  return strokes.filter((s) => {
+    const b = strokeBounds(s)
+    if (b.x > r.x + r.width || b.y > r.y + r.height || b.x + b.width < r.x || b.y + b.height < r.y) return false
+    const n = s.points.length / POINT_STRIDE
+    let inside = 0
+    for (let i = 0; i < s.points.length; i += POINT_STRIDE) {
+      const x = s.points[i]
+      const y = s.points[i + 1]
+      if (x >= r.x && x <= r.x + r.width && y >= r.y && y <= r.y + r.height) inside++
+    }
+    return inside >= n / 2
+  })
+}
+
+/** 線を、点 (ox, oy) が (nx, ny) に来るよう k 倍して動かす（太さも k 倍） */
+export function transformStroke(s: Stroke, ox: number, oy: number, nx: number, ny: number, k: number): Stroke {
+  const points = s.points.slice()
+  for (let i = 0; i < points.length; i += POINT_STRIDE) {
+    points[i] = nx + (points[i] - ox) * k
+    points[i + 1] = ny + (points[i + 1] - oy) * k
+  }
+  return { ...s, points, size: s.size * k }
+}

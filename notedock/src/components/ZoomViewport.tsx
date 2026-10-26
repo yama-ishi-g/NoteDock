@@ -171,6 +171,13 @@ export default function ZoomViewport({ zoom, minZoom, maxZoom, onZoom, contentWi
         pan.current = null
       }
     }
+    // 手書き面が置いたものを指2本で動かし始めたら、始めていたスクロール・ピンチをやめる
+    const onItemGesture = () => {
+      stopInertia()
+      pointers.current.clear()
+      pan.current = null
+      pinch.current = null
+    }
     const onWheel = (e: WheelEvent) => {
       if (!e.ctrlKey && !e.metaKey) return
       e.preventDefault()
@@ -181,7 +188,9 @@ export default function ZoomViewport({ zoom, minZoom, maxZoom, onZoom, contentWi
     view.addEventListener('pointerup', onUp)
     view.addEventListener('pointercancel', onUp)
     view.addEventListener('wheel', onWheel, { passive: false })
+    view.addEventListener('ink-item-gesture', onItemGesture)
     return () => {
+      view.removeEventListener('ink-item-gesture', onItemGesture)
       stopInertia()
       view.removeEventListener('pointerdown', onDown)
       view.removeEventListener('pointermove', onMove)

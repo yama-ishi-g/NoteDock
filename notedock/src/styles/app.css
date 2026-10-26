@@ -686,6 +686,8 @@ button {
   background: rgba(255, 255, 255, 0.85);
   resize: none;
   overflow: hidden;
+  /* 指でのスクロールで操作が取り消されないようにする（指2本で動かすため） */
+  touch-action: none;
   font-family: inherit;
   white-space: pre-wrap;
   word-break: break-all;
