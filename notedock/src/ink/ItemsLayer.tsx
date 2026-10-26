@@ -120,6 +120,69 @@ export function ItemsOverlay({ items, selectedId, editingId, scale, width, engin
     if (ta) ta.setSelectionRange(ta.value.length, ta.value.length)
   }, [editingId])
 
+  // 編集中のテキストボックスは、指2本で動かせる（指1本は文字の選択・カーソル移動に使う）
+  const live = useRef({ editing, scale, engineRef })
+  useEffect(() => {
+    live.current = { editing, scale, engineRef }
+  })
+  useEffect(() => {
+    const ta = taRef.current
+    if (!ta) return
+    const held = new Set<number>()
+    const engine = engineRef
+    let drag: { mx: number; my: number; x: number; y: number } | null = null
+    const mid = (t: TouchList) => ({ x: (t[0].clientX + t[1].clientX) / 2, y: (t[0].clientY + t[1].clientY) / 2 })
+    const onStart = (e: TouchEvent) => {
+      const item = live.current.editing
+      // 指の1本が入力欄に触れていれば、2本目はどこに触れてもよい
+      if (e.touches.length < 2 || !item || ![...e.touches].some((t) => t.target === ta)) return
+      e.preventDefault()
+      const m = mid(e.touches)
+      drag = { mx: m.x, my: m.y, x: item.x, y: item.y }
+    }
+    const onMove = (e: TouchEvent) => {
+      const item = live.current.editing
+      if (!drag || e.touches.length < 2 || !item) return
+      e.preventDefault()
+      const m = mid(e.touches)
+      const s = live.current.scale
+      live.current.engineRef.current?.setItemPosition(item.id, drag.x + (m.x - drag.mx) / s, drag.y + (m.y - drag.my) / s)
+    }
+    const onEnd = (e: TouchEvent) => {
+      if (e.touches.length < 2) drag = null
+    }
+    // PDF・画像の表示側（ZoomViewport）に、入力欄の上の指でスクロール・ピンチをさせない
+    const stop = (e: PointerEvent) => {
+      if (e.pointerType !== 'touch') return
+      e.stopPropagation()
+      held.add(e.pointerId)
+      live.current.engineRef.current?.noteTouch(e.pointerId, true)
+    }
+    const release = (e: PointerEvent) => {
+      if (e.pointerType !== 'touch') return
+      held.delete(e.pointerId)
+      live.current.engineRef.current?.noteTouch(e.pointerId, false)
+    }
+    window.addEventListener('touchstart', onStart, { passive: false, capture: true })
+    window.addEventListener('touchmove', onMove, { passive: false, capture: true })
+    window.addEventListener('touchend', onEnd, true)
+    window.addEventListener('touchcancel', onEnd, true)
+    ta.addEventListener('pointerdown', stop)
+    ta.addEventListener('pointerup', release)
+    ta.addEventListener('pointercancel', release)
+    return () => {
+      // 指を離す前に入力欄が消えたときも、触れている指の記録を残さない
+      for (const id of held) engine.current?.noteTouch(id, false)
+      ta.removeEventListener('pointerup', release)
+      ta.removeEventListener('pointercancel', release)
+      window.removeEventListener('touchstart', onStart, true)
+      window.removeEventListener('touchmove', onMove, true)
+      window.removeEventListener('touchend', onEnd, true)
+      window.removeEventListener('touchcancel', onEnd, true)
+      ta.removeEventListener('pointerdown', stop)
+    }
+  }, [editingId, engineRef])
+
   const finish = () => {
     if (!editingId) return
     engineRef.current?.endTextEdit(editingId)
