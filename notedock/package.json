@@ -1,7 +1,7 @@
 {
   "name": "notedock",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.4.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -19,6 +19,7 @@
     "fflate": "^0.8.3",
     "lucide-react": "^1.61.0",
     "markdown-it": "^15.0.3",
+    "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^6.4.299",
     "perfect-freehand": "^1.2.3",
     "react": "^19.3.1",

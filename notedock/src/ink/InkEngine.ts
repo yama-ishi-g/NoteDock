@@ -26,6 +26,8 @@ export type InkEngineOptions = {
   onHistory: (canUndo: boolean, canRedo: boolean) => void
   /** 下端の近くまで描いたとき（論理座標の y） */
   onReachBottom?: (y: number) => void
+  /** false のとき、描かない指の操作（スクロール・ピンチ）は親に任せる（PDF・画像の拡大表示） */
+  touchPan?: boolean
 }
 
 const PALM_MS = 500
@@ -187,6 +189,20 @@ export class InkEngine {
 
   clearSelection() {
     this.setSelection(null)
+  }
+
+  /** 指で描いている途中の線を取り消す（2本指でピンチを始めたときなど） */
+  cancelTouchGesture() {
+    const g = this.gesture
+    if (g && 'type' in g && g.type === 'touch') {
+      this.gesture = null
+      this.invalidate()
+    }
+  }
+
+  /** ペンで描いている途中か（PDF・画像の表示側で、指のスクロールを止めるため） */
+  get penActive() {
+    return performance.now() - this.lastPenTime < PALM_MS
   }
 
   /** 大きさ・スクロール位置が変わったとき */
@@ -376,7 +392,7 @@ export class InkEngine {
         }
       }
       this.schedule()
-    } else if (e.pointerType === 'touch') {
+    } else if (e.pointerType === 'touch' && this.opts.touchPan !== false) {
       // 指はスクロール（方式A: 自前スクロール＋弱い慣性）
       this.capture(e.pointerId)
       this.gesture = { kind: 'pan', pointerId: e.pointerId, last: { x: e.clientX, y: e.clientY }, samples: [] }

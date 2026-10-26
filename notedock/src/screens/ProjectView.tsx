@@ -4,7 +4,11 @@ import {
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Banner, PopupMenu, SaveIndicator, type MenuState } from '../components/common'
 import FileTree from '../components/FileTree'
-import ImagePreview from '../editors/ImagePreview'
+import ImageViewer from '../editors/ImageViewer'
+import PdfViewer from '../editors/PdfViewer'
+import { burnImage, burnPdf, type ExportNaming } from '../io/burn'
+import { hasStrokes } from '../formats/inkSidecar'
+import { loadSidecar } from '../services/annotations'
 import NoteEditor from '../editors/NoteEditor'
 import { createHandwritingNote, withNoteExt, zipNote } from '../services/notes'
 import { activeEditor } from '../editors/activeEditor'
@@ -304,12 +308,35 @@ export default function ProjectView({ projectId }: { projectId: string }) {
   const exportEntry = async (node: TreeNode) => {
     try {
       if (touchesOpenFile(node.path)) await activeEditor.flush()
-      const file = node.fileType === 'note'
-        ? makeFile(await zipNote(projectId, node.path), node.name)
-        : node.kind === 'dir'
-          ? makeFile(await zipFolder(projectId, node.path), `${node.name}_${dateStamp()}.zip`)
-          : makeFile(await readEntry(projectId, node.path), node.name)
-      if (node.kind === 'dir' || node.fileType === 'note') {
+      // PDF・画像に書き込みがあれば、焼き込むかどうかを選んでもらう
+      let burn: ExportNaming | null = null
+      if (node.fileType === 'pdf' || node.fileType === 'image') {
+        const sc = await loadSidecar(projectId, node.path, node.fileType === 'pdf' ? 'pdf-page' : 'image-px')
+        if (hasStrokes(sc)) {
+          const naming = useAppStore.getState().settings.exportNaming
+          const options = [
+            { value: 'suffix' as const, label: '書き込みを焼き込む（名前に「_書き込み」を付ける）' },
+            { value: 'original' as const, label: '書き込みを焼き込む（元の名前のまま）' },
+          ]
+          if (naming === 'original') options.reverse()
+          const choice = await dialogs.choose({ title: '書き出し方', options: [...options, { value: 'raw' as const, label: '元のファイル（書き込みなし）' }] })
+          if (!choice) return
+          if (choice !== 'raw') {
+            burn = choice
+            if (choice !== naming) void useAppStore.getState().updateSettings({ exportNaming: choice })
+          }
+        }
+      }
+      const file = burn
+        ? node.fileType === 'pdf'
+          ? await burnPdf(projectId, node.path, burn)
+          : await burnImage(projectId, node.path, burn)
+        : node.fileType === 'note'
+          ? makeFile(await zipNote(projectId, node.path), node.name)
+          : node.kind === 'dir'
+            ? makeFile(await zipFolder(projectId, node.path), `${node.name}_${dateStamp()}.zip`)
+            : makeFile(await readEntry(projectId, node.path), node.name)
+      if (node.kind === 'dir' || node.fileType === 'note' || burn) {
         // ZIP の作成に時間がかかると共有シートを開けないため、もう一度タップしてもらう
         const ok = await dialogs.confirm({ title: '書き出しの準備ができました', message: file.name, okLabel: '共有・保存' })
         if (!ok) return
@@ -452,11 +479,12 @@ export default function ProjectView({ projectId }: { projectId: string }) {
                 {(openType === 'text' || openType === 'markdown') && (
                   <TextEditor key={openFile} projectId={projectId} path={openFile} markdown={openType === 'markdown'} mode={mdMode} />
                 )}
-                {openType === 'image' && <ImagePreview key={openFile} projectId={projectId} path={openFile} />}
+                {openType === 'image' && <ImageViewer key={openFile} projectId={projectId} path={openFile} />}
+                {openType === 'pdf' && <PdfViewer key={openFile} projectId={projectId} path={openFile} />}
                 {openType === 'note' && <NoteEditor key={openFile} projectId={projectId} path={openFile} />}
-                {(openType === 'pdf' || openType === 'other') && (
+                {openType === 'other' && (
                   <div className="editor-message">
-                    <p>{openType === 'pdf' ? 'PDFの表示と書き込みは、今後のバージョンで対応します。' : 'このファイルは表示できません。'}</p>
+                    <p>このファイルは表示できません。</p>
                     <button className="btn" onClick={() => exportEntry({ name: basename(openFile), path: openFile, kind: 'file' })}><Share size={16} /> 書き出し</button>
                   </div>
                 )}
