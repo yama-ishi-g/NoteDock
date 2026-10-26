@@ -57,6 +57,10 @@ export default defineConfig(({ command, isPreview }) => ({
         // iPad実機確認用（Cloudflare Tunnel の一時URL）からのアクセスを許可する
         allowedHosts: ['.trycloudflare.com'],
     },
+    build: {
+        // オフラインで使う PWA のため、1つのファイルにまとまっていても問題ない
+        chunkSizeWarningLimit: 1500,
+    },
     test: {
         environment: 'node',
         include: ['src/**/*.test.ts'],

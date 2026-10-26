@@ -35,6 +35,20 @@ const GROW_MARGIN = 100
 const INERTIA_FRICTION = 0.9
 const INERTIA_MIN_SPEED = 0.03
 const INERTIA_MAX_SPEED = 3
+/** Pointer Events が届かなかったとき、touch イベントから描く場合の pointerId */
+const TOUCH_FALLBACK_ID = -1
+/** Pencil の touchstart から pointerdown を待つ時間 */
+const FALLBACK_WAIT_MS = 50
+
+type StylusTouch = { id: number; pointerSeen: boolean; buffer: Touch[]; timer: number }
+
+// touch イベントを Pointer Events の代わりに使うための、最低限の形
+function touchAsPointer(t: Touch): PointerEvent {
+  const force = t.force > 0 ? Math.min(1, t.force) : 0.5
+  return { pointerId: TOUCH_FALLBACK_ID, pointerType: 'pen', clientX: t.clientX, clientY: t.clientY, pressure: force, button: 0, preventDefault() {} } as unknown as PointerEvent
+}
+
+const stylusIn = (list: TouchList) => [...list].find((t) => (t as Touch & { touchType?: string }).touchType === 'stylus')
 
 type Gesture =
   | { kind: 'draw'; pointerId: number; type: string; stroke: Stroke; start: number; anchor: Point; lastMoveAt: number; flashUntil: number }
@@ -66,6 +80,7 @@ export class InkEngine {
   private view = { top: 0, height: 0, width: 0, dpr: 1 }
   private resizeObserver: ResizeObserver
   private boundScroller: HTMLElement | null = null
+  private stylus: StylusTouch | null = null
 
   constructor(host: HTMLElement, opts: InkEngineOptions) {
     this.host = host
@@ -84,6 +99,8 @@ export class InkEngine {
     // iPadOS は Pencil の動きをテキスト選択・Scribble として扱い、近くの文字にフォーカスを移すことがある（段階0で確認）
     host.addEventListener('touchstart', this.onTouch, { passive: false })
     host.addEventListener('touchmove', this.onTouch, { passive: false })
+    host.addEventListener('touchend', this.onTouch)
+    host.addEventListener('touchcancel', this.onTouch)
     document.addEventListener('selectstart', this.onSelectStart)
     window.addEventListener('resize', this.refresh)
     this.resizeObserver = new ResizeObserver(this.refresh)
@@ -102,6 +119,8 @@ export class InkEngine {
     this.host.removeEventListener('pointercancel', this.onCancel)
     this.host.removeEventListener('touchstart', this.onTouch)
     this.host.removeEventListener('touchmove', this.onTouch)
+    this.host.removeEventListener('touchend', this.onTouch)
+    this.host.removeEventListener('touchcancel', this.onTouch)
     document.removeEventListener('selectstart', this.onSelectStart)
     window.removeEventListener('resize', this.refresh)
     this.boundScroller?.removeEventListener('scroll', this.refresh)
@@ -291,8 +310,22 @@ export class InkEngine {
     return performance.now() - this.lastPenTime >= PALM_MS && this.gesture?.kind !== 'draw'
   }
 
+  private capture(pointerId: number) {
+    if (pointerId === TOUCH_FALLBACK_ID) return
+    try {
+      this.host.setPointerCapture(pointerId)
+    } catch {
+      // 取り込めなくても描画は続けられる
+    }
+  }
+
   private onDown = (e: PointerEvent) => {
     this.stopInertia()
+    if (e.pointerType === 'pen' && e.pointerId !== TOUCH_FALLBACK_ID) {
+      if (this.stylus) this.stylus.pointerSeen = true
+      // touch イベントから描き始めている線は、そのまま touch イベントで続ける
+      if (this.gesture?.pointerId === TOUCH_FALLBACK_ID) return
+    }
     if (e.pointerType === 'pen') {
       this.lastPenTime = performance.now()
       // ペンが触れたら、指で描いている途中の線は取り消す
@@ -305,7 +338,7 @@ export class InkEngine {
     if (this.gesture) return
 
     if (this.canDraw(e)) {
-      this.host.setPointerCapture(e.pointerId)
+      this.capture(e.pointerId)
       e.preventDefault()
       const p = this.toLogical(e)
       if (this.tool === 'eraser') {
@@ -345,7 +378,7 @@ export class InkEngine {
       this.schedule()
     } else if (e.pointerType === 'touch') {
       // 指はスクロール（方式A: 自前スクロール＋弱い慣性）
-      this.host.setPointerCapture(e.pointerId)
+      this.capture(e.pointerId)
       this.gesture = { kind: 'pan', pointerId: e.pointerId, last: { x: e.clientX, y: e.clientY }, samples: [] }
     }
   }
@@ -455,7 +488,33 @@ export class InkEngine {
 
   private onTouch = (e: TouchEvent) => {
     // ペンの touch イベントは常に止めて、OS のテキスト選択・Scribble が動かないようにする。指は自前でスクロールするため止める
-    e.preventDefault()
+    if (e.cancelable && (e.type === 'touchstart' || e.type === 'touchmove')) e.preventDefault()
+
+    // 保険: iPadOS が Pencil の pointerdown を渡さないことがある（ボタンをタップした直後など）。
+    // そのときは touch イベントから線を描く
+    const t = stylusIn(e.changedTouches)
+    if (!t) return
+    if (e.type === 'touchstart') {
+      if (this.stylus) window.clearTimeout(this.stylus.timer)
+      const stylus: StylusTouch = { id: t.identifier, pointerSeen: false, buffer: [t], timer: 0 }
+      stylus.timer = window.setTimeout(() => {
+        if (this.stylus !== stylus || stylus.pointerSeen || this.gesture) return
+        const [first, ...rest] = stylus.buffer
+        this.onDown(touchAsPointer(first))
+        for (const r of rest) this.onMove(touchAsPointer(r))
+        stylus.buffer = []
+      }, FALLBACK_WAIT_MS)
+      this.stylus = stylus
+    } else if (this.stylus && t.identifier === this.stylus.id) {
+      if (e.type === 'touchmove') {
+        if (this.gesture?.pointerId === TOUCH_FALLBACK_ID) this.onMove(touchAsPointer(t))
+        else if (!this.stylus.pointerSeen) this.stylus.buffer.push(t)
+      } else {
+        window.clearTimeout(this.stylus.timer)
+        if (this.gesture?.pointerId === TOUCH_FALLBACK_ID) this.onUp(touchAsPointer(t))
+        this.stylus = null
+      }
+    }
   }
 
   private onSelectStart = (e: Event) => {

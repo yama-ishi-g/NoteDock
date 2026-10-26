@@ -10,8 +10,6 @@ type SyncAccessHandle = {
   flush(): void
   close(): void
 }
-type MovableHandle = FileSystemFileHandle & { move?: (dir: FileSystemDirectoryHandle, name: string) => Promise<void> }
-
 async function getDir(path: string): Promise<FileSystemDirectoryHandle> {
   let dir = await navigator.storage.getDirectory()
   for (const part of path.split('/').filter(Boolean)) {
@@ -20,37 +18,23 @@ async function getDir(path: string): Promise<FileSystemDirectoryHandle> {
   return dir
 }
 
-async function writeTo(dir: FileSystemDirectoryHandle, name: string, data: Uint8Array) {
-  const fh = await dir.getFileHandle(name, { create: true })
+// 同じファイルの中身を直接書き換える。
+// 以前は「name.tmp に書く → 元を削除 → 名前を変える」方式だったが、確認用のブラウザを強制終了したときに、
+// その方式で書き直したファイルがフォルダから消える現象が2回起きた（段階2）。
+// ファイル名の操作をしなければ、強制終了されてもフォルダの中身（どのファイルがあるか）は変わらない
+async function writeFile(path: string, data: Uint8Array) {
+  const i = path.lastIndexOf('/')
+  const dir = await getDir(path.slice(0, Math.max(0, i)))
+  const fh = await dir.getFileHandle(path.slice(i + 1), { create: true })
   const handle = await (fh as unknown as { createSyncAccessHandle(): Promise<SyncAccessHandle> }).createSyncAccessHandle()
   try {
-    handle.truncate(0)
+    // 先に新しい内容を書いてから長さを合わせる（途中で終了しても、ファイルが空になることはない）
     handle.write(data, { at: 0 })
+    handle.truncate(data.byteLength)
     handle.flush()
   } finally {
     handle.close()
   }
-  return fh as MovableHandle
-}
-
-// 安全な上書き: name.tmp に書く → 元のファイルを削除 → name.tmp を本来の名前に移動
-async function safeWrite(path: string, data: Uint8Array) {
-  const i = path.lastIndexOf('/')
-  const dir = await getDir(path.slice(0, Math.max(0, i)))
-  const name = path.slice(i + 1)
-  const tmp = await writeTo(dir, `${name}.tmp`, data)
-  if (typeof tmp.move !== 'function') {
-    // move() がない環境では直接上書きする
-    await dir.removeEntry(`${name}.tmp`)
-    await writeTo(dir, name, data)
-    return
-  }
-  try {
-    await dir.removeEntry(name)
-  } catch {
-    // 新規ファイル
-  }
-  await tmp.move(dir, name)
 }
 
 // 書き込みは届いた順に1つずつ行う（同じファイルへの書き込みが重なると失敗・消失するため）
@@ -60,7 +44,7 @@ self.onmessage = (e: MessageEvent<WriteRequest>) => {
   const { id, path, data } = e.data
   chain = chain.then(async () => {
     try {
-      await safeWrite(path, new Uint8Array(data))
+      await writeFile(path, new Uint8Array(data))
       postMessage({ id, ok: true })
     } catch (err) {
       postMessage({ id, ok: false, error: err instanceof Error ? `${err.name}: ${err.message}` : String(err) })

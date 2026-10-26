@@ -1,4 +1,5 @@
 import { Eraser, Grid3x3, Hand, Highlighter, Lasso, PenLine, Redo2, Square, Undo2 } from 'lucide-react'
+import { useEffect, useRef } from 'react'
 import PressButton from '../components/PressButton'
 import type { InkBackground } from '../formats/notedock'
 import { ERASER_RADII, MARKER_SIZES, PEN_SIZES, PRESET_COLORS, type SizeLevel, type Tool } from './model'
@@ -44,10 +45,26 @@ export default function InkToolbar({ state, onChange, canUndo, canRedo, onUndo, 
   const color = colorTool === 'marker' ? state.markerColor : state.penColor
   const levelKey = tool === 'marker' ? 'markerLevel' : tool === 'eraser' ? 'eraserLevel' : 'penLevel'
   const showSizes = tool !== 'lasso'
+  const barRef = useRef<HTMLDivElement>(null)
+
+  // Pencil でボタンをタップすると、iPadOS が文字選択・Scribble の始まりかどうかを見極める間（0.数秒）、
+  // 次の Pencil の入力を手書き面に渡さない。touchstart を止めて、OS 標準の処理を始めさせない（段階2の実機確認で判明）。
+  // React の onTouchStart は passive で preventDefault が効かないため、直接登録する
+  useEffect(() => {
+    const bar = barRef.current!
+    const onTouchStart = (e: TouchEvent) => {
+      // 「ほかの色」は OS の色選択を開くため、標準の処理に任せる
+      if ((e.target as HTMLElement).closest('.color-btn.custom')) return
+      e.preventDefault()
+    }
+    bar.addEventListener('touchstart', onTouchStart, { passive: false })
+    return () => bar.removeEventListener('touchstart', onTouchStart)
+  }, [])
+
   const setColor = (c: string) => onChange(colorTool === 'marker' ? { markerColor: c, tool: tool === 'eraser' ? 'pen' : tool } : { penColor: c, tool: tool === 'eraser' ? 'pen' : tool })
 
   return (
-    <div className="ink-toolbar" role="toolbar" aria-label="手書きツール">
+    <div ref={barRef} className="ink-toolbar" role="toolbar" aria-label="手書きツール">
       <div className="ink-group">
         {TOOLS.map((t) => (
           <PressButton key={t.tool} className={`tool-btn ${tool === t.tool ? 'on' : ''}`} aria-label={t.label} title={t.label} aria-pressed={tool === t.tool} onPress={() => onChange({ tool: t.tool })}>
