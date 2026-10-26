@@ -1,15 +1,34 @@
-import { useEffect, useRef, useState } from 'react'
-import { InkPad, type InkStats, type Tool } from './inkPad'
+import { useEffect, useRef, useState, type ButtonHTMLAttributes, type KeyboardEvent, type PointerEvent } from 'react'
+import { InkPad, type EraserSize, type InkStats, type Tool } from './inkPad'
 import { setResult } from './report'
 
 // 0-5 Pencilの描き心地 / 0-6 直線化
 const COLORS = ['#2c2c2a', '#e24b4a', '#378add', '#639922']
+const ERASER_SIZES: [EraserSize, string][] = [['s', '小'], ['m', '中'], ['l', '大']]
+
+// ツールの切り替えは、指やペンが触れた瞬間（pointerdown）に反映する。
+// click は指を離した後に遅れて届くため、切り替えが遅く感じられる
+function PressButton({ onPress, ...rest }: ButtonHTMLAttributes<HTMLButtonElement> & { onPress: () => void }) {
+  return (
+    <button
+      {...rest}
+      onPointerDown={(e: PointerEvent) => {
+        e.preventDefault()
+        onPress()
+      }}
+      onKeyDown={(e: KeyboardEvent) => {
+        if (e.key === 'Enter' || e.key === ' ') onPress()
+      }}
+    />
+  )
+}
 
 export default function InkSection() {
   const boxRef = useRef<HTMLDivElement>(null)
   const padRef = useRef<InkPad | null>(null)
   const [tool, setTool] = useState<Tool>('pen')
   const [color, setColor] = useState(COLORS[0])
+  const [eraserSize, setEraserSize] = useState<EraserSize>('m')
   const [finger, setFinger] = useState(false)
   const [holdMs, setHoldMs] = useState(600)
   const [stats, setStats] = useState<InkStats | null>(null)
@@ -34,12 +53,29 @@ export default function InkSection() {
     return () => pad.destroy()
   }, [])
 
-  useEffect(() => {
+  // 再描画を待たずに、手書き面へ即座に反映する
+  const selectTool = (t: Tool) => {
+    if (padRef.current) padRef.current.tool = t
+    setTool(t)
+  }
+  const selectColor = (c: string) => {
     if (padRef.current) {
-      padRef.current.tool = tool
-      padRef.current.color = color
+      padRef.current.color = c
+      if (padRef.current.tool === 'eraser') padRef.current.tool = 'pen'
     }
-  }, [tool, color])
+    setColor(c)
+    setTool((t) => (t === 'eraser' ? 'pen' : t))
+  }
+  const undo = () => padRef.current?.undo()
+  const clearAll = () => padRef.current?.clear()
+  const selectEraserSize = (size: EraserSize) => {
+    if (padRef.current) {
+      padRef.current.eraserSize = size
+      padRef.current.tool = 'eraser'
+    }
+    setEraserSize(size)
+    setTool('eraser')
+  }
 
   useEffect(() => {
     if (!stats) return
@@ -53,16 +89,19 @@ export default function InkSection() {
     <section id="lab-ink">
       <h2>0-5 描き心地 / 0-6 直線化</h2>
       <div className="row">
-        <button className={tool === 'pen' ? 'on' : ''} onClick={() => setTool('pen')}>ペン</button>
-        <button className={tool === 'marker' ? 'on' : ''} onClick={() => setTool('marker')}>マーカー</button>
-        <button className={tool === 'eraser' ? 'on' : ''} onClick={() => setTool('eraser')}>消しゴム</button>
+        <PressButton className={tool === 'pen' ? 'on' : ''} onPress={() => selectTool('pen')}>ペン</PressButton>
+        <PressButton className={tool === 'marker' ? 'on' : ''} onPress={() => selectTool('marker')}>マーカー</PressButton>
+        <PressButton className={tool === 'eraser' ? 'on' : ''} onPress={() => selectTool('eraser')}>消しゴム</PressButton>
+        {ERASER_SIZES.map(([size, label]) => (
+          <PressButton key={size} className={tool === 'eraser' && eraserSize === size ? 'on' : ''} onPress={() => selectEraserSize(size)}>{label}</PressButton>
+        ))}
         {COLORS.map((c) => (
-          <button key={c} aria-label={c} onClick={() => setColor(c)}
+          <PressButton key={c} aria-label={c} onPress={() => selectColor(c)}
             style={{ width: 30, height: 30, padding: 0, borderRadius: '50%', background: c, outline: color === c ? '2px solid var(--accent)' : 'none', outlineOffset: 2 }} />
         ))}
-        <button className={finger ? 'on' : ''} onClick={() => setFinger((v) => !v)}>指で描く {finger ? 'ON' : 'OFF'}</button>
-        <button onClick={() => padRef.current?.undo()}>元に戻す</button>
-        <button onClick={() => padRef.current?.clear()}>全消去</button>
+        <PressButton className={finger ? 'on' : ''} onPress={() => setFinger((v) => !v)}>指で描く {finger ? 'ON' : 'OFF'}</PressButton>
+        <PressButton onPress={undo}>元に戻す</PressButton>
+        <PressButton onPress={clearAll}>全消去</PressButton>
       </div>
       <div className="row">
         <label>直線化の保持時間 {holdMs}ms</label>

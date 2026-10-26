@@ -4,6 +4,7 @@ import { getStroke } from 'perfect-freehand'
 
 export type Tool = 'pen' | 'marker' | 'eraser'
 type StrokeTool = Exclude<Tool, 'eraser'>
+export type EraserSize = 's' | 'm' | 'l'
 
 type Point = [x: number, y: number, pressure: number]
 
@@ -39,7 +40,7 @@ const PALM_MS = 500
 const HOLD_RADIUS = 3
 const MIN_LINE_LENGTH = 20
 const MAX_HISTORY = 100
-const ERASER_RADIUS = 12
+const ERASER_RADIUS: Record<EraserSize, number> = { s: 6, m: 12, l: 24 }
 const DENSIFY_STEP = 2
 
 const strokeSize = (s: Stroke) => (s.tool === 'marker' ? 18 : 4)
@@ -120,6 +121,7 @@ function drawStroke(ctx: CanvasRenderingContext2D, stroke: Stroke, flash = false
 export class InkPad {
   tool: Tool = 'pen'
   color = '#2c2c2a'
+  eraserSize: EraserSize = 'm'
 
   private committed: HTMLCanvasElement
   private live: HTMLCanvasElement
@@ -207,6 +209,10 @@ export class InkPad {
     if (!prev) return
     this.strokes = prev
     this.redrawCommitted()
+  }
+
+  private get eraserRadius() {
+    return ERASER_RADIUS[this.eraserSize]
   }
 
   private pushHistory() {
@@ -359,7 +365,7 @@ export class InkPad {
     const prev = this.eraserPos
     this.eraserPos = { x, y }
     if (prev) {
-      const n = Math.floor(Math.hypot(x - prev.x, y - prev.y) / (ERASER_RADIUS / 2))
+      const n = Math.floor(Math.hypot(x - prev.x, y - prev.y) / (this.eraserRadius / 2))
       for (let k = 1; k <= n; k++) this.eraseAtPoint(prev.x + ((x - prev.x) * k) / (n + 1), prev.y + ((y - prev.y) * k) / (n + 1))
     }
     this.eraseAtPoint(x, y)
@@ -369,7 +375,7 @@ export class InkPad {
     let changed = false
     const next: Stroke[] = []
     for (const s of this.strokes) {
-      const pieces = eraseFromStroke(s, x, y, ERASER_RADIUS)
+      const pieces = eraseFromStroke(s, x, y, this.eraserRadius)
       if (pieces) {
         changed = true
         next.push(...pieces)
@@ -421,7 +427,7 @@ export class InkPad {
     if (this.erasePointer >= 0 && this.eraserPos) {
       // 消しゴムの範囲を円で表示する
       ctx.beginPath()
-      ctx.arc(this.eraserPos.x, this.eraserPos.y, ERASER_RADIUS, 0, Math.PI * 2)
+      ctx.arc(this.eraserPos.x, this.eraserPos.y, this.eraserRadius, 0, Math.PI * 2)
       ctx.strokeStyle = '#888'
       ctx.lineWidth = 1
       ctx.stroke()
