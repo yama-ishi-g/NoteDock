@@ -1,0 +1,310 @@
+import { getStroke } from 'perfect-freehand'
+
+// 段階0の手書き試作。描き心地・手のひら対策・直線化・指スクロールを検証する（本実装は段階2で作り直す）
+
+export type Tool = 'pen' | 'marker'
+
+type Point = [x: number, y: number, pressure: number]
+
+type Stroke = {
+  tool: Tool
+  color: string
+  points: Point[]
+  simulatePressure: boolean
+  isLine: boolean
+}
+
+export type InkStats = {
+  pointerType: string
+  pressure: number
+  eventsPerSec: number
+  coalescedAvg: number
+  latencyMs: number
+  cancels: number
+  palmRejected: number
+}
+
+export type InkPadOptions = {
+  holdMs: () => number
+  fingerDraw: () => boolean
+  /** 'manual': 指の移動を onPan で通知する / 'native': 指はブラウザに任せる */
+  touchMode: () => 'manual' | 'native'
+  onPan?: (dx: number, dy: number) => void
+  onStats?: (s: InkStats) => void
+  onSnap?: () => void
+}
+
+const PALM_MS = 500
+const HOLD_RADIUS = 3
+const MIN_LINE_LENGTH = 20
+
+function outlinePath(stroke: Stroke): Path2D {
+  const size = stroke.tool === 'marker' ? 18 : 4
+  const pts = stroke.isLine && stroke.points.length >= 2
+    ? [stroke.points[0], stroke.points[stroke.points.length - 1]]
+    : stroke.points
+  const outline = getStroke(pts, {
+    size,
+    thinning: stroke.tool === 'marker' ? 0 : 0.6,
+    smoothing: 0.5,
+    streamline: stroke.isLine ? 0 : 0.4,
+    simulatePressure: stroke.simulatePressure && !stroke.isLine,
+    last: true,
+  })
+  const path = new Path2D()
+  if (!outline.length) return path
+  path.moveTo(outline[0][0], outline[0][1])
+  for (let i = 1; i < outline.length; i++) {
+    const [x0, y0] = outline[i - 1]
+    const [x1, y1] = outline[i]
+    path.quadraticCurveTo(x0, y0, (x0 + x1) / 2, (y0 + y1) / 2)
+  }
+  path.closePath()
+  return path
+}
+
+function drawStroke(ctx: CanvasRenderingContext2D, stroke: Stroke, flash = false) {
+  ctx.save()
+  ctx.fillStyle = stroke.color
+  ctx.globalAlpha = (stroke.tool === 'marker' ? 0.35 : 1) * (flash ? 0.4 : 1)
+  ctx.fill(outlinePath(stroke))
+  ctx.restore()
+}
+
+export class InkPad {
+  tool: Tool = 'pen'
+  color = '#2c2c2a'
+
+  private committed: HTMLCanvasElement
+  private live: HTMLCanvasElement
+  private strokes: Stroke[] = []
+  private current: Stroke | null = null
+  private currentPointer = -1
+  private currentType = ''
+  private anchor = { x: 0, y: 0, t: 0 }
+  private flashUntil = 0
+  private lastPenTime = -Infinity
+  private panPointer = -1
+  private panLast = { x: 0, y: 0 }
+  private raf = 0
+  private dpr = 1
+  private resizeObserver: ResizeObserver
+  private stats: InkStats = { pointerType: '-', pressure: 0, eventsPerSec: 0, coalescedAvg: 0, latencyMs: 0, cancels: 0, palmRejected: 0 }
+  private eventTimes: number[] = []
+  private coalescedCounts: number[] = []
+  private latencies: number[] = []
+  private pendingEventTime = 0
+
+  private container: HTMLElement
+  private opts: InkPadOptions
+
+  constructor(container: HTMLElement, opts: InkPadOptions) {
+    this.container = container
+    this.opts = opts
+    this.committed = document.createElement('canvas')
+    this.live = document.createElement('canvas')
+    for (const c of [this.committed, this.live]) {
+      Object.assign(c.style, { position: 'absolute', inset: '0', width: '100%', height: '100%' })
+      container.appendChild(c)
+    }
+    container.style.position = 'relative'
+    this.applyTouchAction()
+    container.addEventListener('pointerdown', this.onDown)
+    container.addEventListener('pointermove', this.onMove)
+    container.addEventListener('pointerup', this.onUp)
+    container.addEventListener('pointercancel', this.onCancel)
+    this.resizeObserver = new ResizeObserver(() => this.resize())
+    this.resizeObserver.observe(container)
+    this.resize()
+  }
+
+  destroy() {
+    cancelAnimationFrame(this.raf)
+    this.resizeObserver.disconnect()
+    this.container.removeEventListener('pointerdown', this.onDown)
+    this.container.removeEventListener('pointermove', this.onMove)
+    this.container.removeEventListener('pointerup', this.onUp)
+    this.container.removeEventListener('pointercancel', this.onCancel)
+    this.committed.remove()
+    this.live.remove()
+  }
+
+  applyTouchAction() {
+    this.container.style.touchAction = this.opts.touchMode() === 'native' ? 'pan-y' : 'none'
+  }
+
+  clear() {
+    this.strokes = []
+    this.redrawCommitted()
+  }
+
+  undo() {
+    this.strokes.pop()
+    this.redrawCommitted()
+  }
+
+  private resize() {
+    this.dpr = window.devicePixelRatio || 1
+    const { width, height } = this.container.getBoundingClientRect()
+    for (const c of [this.committed, this.live]) {
+      c.width = Math.round(width * this.dpr)
+      c.height = Math.round(height * this.dpr)
+    }
+    this.redrawCommitted()
+  }
+
+  private ctx(c: HTMLCanvasElement) {
+    const ctx = c.getContext('2d')!
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0)
+    return ctx
+  }
+
+  private redrawCommitted() {
+    const ctx = this.ctx(this.committed)
+    ctx.clearRect(0, 0, this.committed.width, this.committed.height)
+    for (const s of this.strokes) drawStroke(ctx, s)
+  }
+
+  private pos(e: PointerEvent): Point {
+    const r = this.container.getBoundingClientRect()
+    const pressure = e.pointerType === 'pen' ? e.pressure || 0.5 : 0.5
+    return [e.clientX - r.left, e.clientY - r.top, pressure]
+  }
+
+  private canDraw(e: PointerEvent) {
+    if (e.pointerType === 'pen') return true
+    if (e.pointerType === 'mouse') return e.button === 0
+    // touch
+    if (!this.opts.fingerDraw()) return false
+    if (performance.now() - this.lastPenTime < PALM_MS || this.currentType === 'pen') {
+      this.stats.palmRejected++
+      return false
+    }
+    return true
+  }
+
+  private onDown = (e: PointerEvent) => {
+    this.stats.pointerType = e.pointerType
+    if (e.pointerType === 'pen') {
+      this.lastPenTime = performance.now()
+      // ペンが触れたら、指で描いている途中の線は取り消す（手のひら対策）
+      if (this.current && this.currentType === 'touch') this.current = null
+    }
+    if (this.current) return
+    if (this.canDraw(e)) {
+      this.container.setPointerCapture(e.pointerId)
+      const p = this.pos(e)
+      this.current = { tool: this.tool, color: this.color, points: [p], simulatePressure: e.pointerType !== 'pen', isLine: false }
+      this.currentPointer = e.pointerId
+      this.currentType = e.pointerType
+      this.anchor = { x: p[0], y: p[1], t: performance.now() }
+      this.schedule()
+      e.preventDefault()
+    } else if (e.pointerType === 'touch' && this.opts.touchMode() === 'manual' && this.panPointer < 0) {
+      this.container.setPointerCapture(e.pointerId)
+      this.panPointer = e.pointerId
+      this.panLast = { x: e.clientX, y: e.clientY }
+    }
+  }
+
+  private onMove = (e: PointerEvent) => {
+    if (e.pointerType === 'pen') this.lastPenTime = performance.now()
+    if (e.pointerId === this.panPointer) {
+      this.opts.onPan?.(e.clientX - this.panLast.x, e.clientY - this.panLast.y)
+      this.panLast = { x: e.clientX, y: e.clientY }
+      return
+    }
+    if (!this.current || e.pointerId !== this.currentPointer) return
+    const events = e.getCoalescedEvents?.() ?? [e]
+    const list = events.length ? events : [e]
+    this.coalescedCounts.push(list.length)
+    this.eventTimes.push(performance.now())
+    this.pendingEventTime ||= e.timeStamp
+    this.stats.pressure = e.pressure
+
+    if (this.current.isLine) {
+      // 直線化の後は終点だけをペン位置に追従させる
+      this.current.points = [this.current.points[0], this.pos(e)]
+    } else {
+      for (const ev of list) this.current.points.push(this.pos(ev))
+      const p = this.pos(e)
+      if (Math.hypot(p[0] - this.anchor.x, p[1] - this.anchor.y) > HOLD_RADIUS) {
+        this.anchor = { x: p[0], y: p[1], t: performance.now() }
+      }
+    }
+    this.schedule()
+  }
+
+  private onUp = (e: PointerEvent) => {
+    if (e.pointerId === this.panPointer) {
+      this.panPointer = -1
+      return
+    }
+    if (!this.current || e.pointerId !== this.currentPointer) return
+    this.strokes.push(this.current)
+    drawStroke(this.ctx(this.committed), this.current)
+    this.current = null
+    this.currentType = ''
+    this.ctx(this.live).clearRect(0, 0, this.live.width, this.live.height)
+  }
+
+  private onCancel = (e: PointerEvent) => {
+    this.stats.cancels++
+    if (e.pointerId === this.panPointer) this.panPointer = -1
+    if (e.pointerId === this.currentPointer) {
+      this.current = null
+      this.currentType = ''
+      this.ctx(this.live).clearRect(0, 0, this.live.width, this.live.height)
+    }
+    this.emitStats()
+  }
+
+  private schedule() {
+    if (!this.raf) this.raf = requestAnimationFrame(this.frame)
+  }
+
+  private frame = () => {
+    this.raf = 0
+    const now = performance.now()
+    const ctx = this.ctx(this.live)
+    ctx.clearRect(0, 0, this.live.width, this.live.height)
+    if (!this.current) return
+
+    if (!this.current.isLine && now - this.anchor.t >= this.opts.holdMs()) {
+      const pts = this.current.points
+      const first = pts[0]
+      const last = pts[pts.length - 1]
+      if (Math.hypot(last[0] - first[0], last[1] - first[1]) >= MIN_LINE_LENGTH) {
+        const avg = pts.reduce((s, p) => s + p[2], 0) / pts.length
+        this.current.points = [[first[0], first[1], avg], [last[0], last[1], avg]]
+        this.current.isLine = true
+        this.flashUntil = now + 150
+        this.opts.onSnap?.()
+      }
+    }
+
+    drawStroke(ctx, this.current, now < this.flashUntil)
+    if (this.pendingEventTime) {
+      this.latencies.push(now - this.pendingEventTime)
+      this.pendingEventTime = 0
+    }
+    this.emitStats()
+    // ペンが止まっていてもイベントが来ないため、描画中は毎フレーム直線化の判定を続ける
+    this.schedule()
+  }
+
+  private lastEmit = 0
+  private emitStats() {
+    const now = performance.now()
+    if (now - this.lastEmit < 250) return
+    this.lastEmit = now
+    this.eventTimes = this.eventTimes.filter((t) => now - t < 1000)
+    this.coalescedCounts = this.coalescedCounts.slice(-120)
+    this.latencies = this.latencies.slice(-120)
+    const avg = (a: number[]) => (a.length ? a.reduce((s, v) => s + v, 0) / a.length : 0)
+    this.stats.eventsPerSec = this.eventTimes.length
+    this.stats.coalescedAvg = avg(this.coalescedCounts)
+    this.stats.latencyMs = avg(this.latencies)
+    this.opts.onStats?.({ ...this.stats })
+  }
+}
