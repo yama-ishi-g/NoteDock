@@ -40,4 +40,6 @@ export function migrateSettings(raw: unknown): Settings {
 /** app.json: 設定ではないアプリの記録 */
 export type AppState = {
   lastBackupAt?: string
+  /** 使い方プロジェクトを用意したか（削除しても作り直さないため） */
+  howtoSeeded?: boolean
 }

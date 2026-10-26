@@ -1,5 +1,6 @@
 import { APP_STATE_PATH, migrateSettings, SETTINGS_PATH, type AppState, type Settings } from '../formats/settings'
 import { getStorage } from '../storage'
+import { createHowToProject } from './howto'
 
 export async function loadSettings(): Promise<Settings> {
   try {
@@ -19,6 +20,23 @@ export async function loadAppState(): Promise<AppState> {
   } catch {
     return {}
   }
+}
+
+let howtoChecked: Promise<boolean> | null = null
+
+/** 初めて起動したとき（v1.0.0 を初めて開いたときを含む）に、使い方プロジェクトを1回だけ用意する。作ったら true */
+export function ensureHowToProject(): Promise<boolean> {
+  howtoChecked ??= (async () => {
+    const state = await loadAppState()
+    if (state.howtoSeeded) return false
+    await createHowToProject()
+    await getStorage().writeJson(APP_STATE_PATH, { ...(await loadAppState()), howtoSeeded: true })
+    return true
+  })().finally(() => {
+    // 同時に呼ばれたときに二重に作らないよう、処理中だけ共有する
+    howtoChecked = null
+  })
+  return howtoChecked
 }
 
 export async function markBackedUp(): Promise<void> {

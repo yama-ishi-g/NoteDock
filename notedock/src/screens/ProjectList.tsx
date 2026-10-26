@@ -4,7 +4,7 @@ import { Banner, PopupMenu, type MenuState } from '../components/common'
 import { importZipFile } from '../io/importZipFile'
 import { exportProjectZip } from '../io/projectZip'
 import { shareFile } from '../io/share'
-import { loadAppState, markBackedUp, needsBackupReminder } from '../services/appData'
+import { ensureHowToProject, loadAppState, markBackedUp, needsBackupReminder } from '../services/appData'
 import { countFiles, createProject, deleteProject, listProjects, renameProject } from '../services/projects'
 import { reportError, useAppStore } from '../state/appStore'
 import { dialogs } from '../state/dialogs'
@@ -31,6 +31,12 @@ export default function ProjectList() {
 
   const reload = useCallback(async () => {
     try {
+      try {
+        await ensureHowToProject()
+      } catch (err) {
+        // 使い方プロジェクトを作れなくても、一覧は表示する
+        reportError(err, '使い方プロジェクトを作れませんでした: ')
+      }
       const list = await listProjects()
       setProjects(list)
       const state = await loadAppState()

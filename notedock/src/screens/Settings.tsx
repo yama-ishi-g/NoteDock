@@ -1,9 +1,10 @@
-import { ArrowLeft, FlaskConical, HardDrive, Share, ShieldCheck } from 'lucide-react'
+import { ArrowLeft, BookOpen, FlaskConical, HardDrive, Share, ShieldCheck } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { exportAllZip } from '../io/projectZip'
 import { shareFile } from '../io/share'
 import { formatBuildLabel } from '../lib/version'
 import { markBackedUp } from '../services/appData'
+import { createHowToProject } from '../services/howto'
 import { readErrorLog, reportError, useAppStore, type View } from '../state/appStore'
 import { dialogs } from '../state/dialogs'
 import { getStorage, requestPersist } from '../storage'
@@ -96,6 +97,18 @@ export default function SettingsScreen({ back }: { back: View }) {
 
         <section>
           <h2>このアプリについて</h2>
+          <div className="setting-row">
+            <span><BookOpen size={16} /> 使い方</span>
+            <button className="btn" onClick={async () => {
+              try {
+                const id = await createHowToProject()
+                toast('使い方プロジェクトを追加しました')
+                navigate({ screen: 'project', projectId: id })
+              } catch (err) {
+                reportError(err, '追加できませんでした: ')
+              }
+            }}>使い方プロジェクトを追加</button>
+          </div>
           <div className="setting-row">
             <span>バージョン</span>
             <span className="muted">{formatBuildLabel()}</span>
