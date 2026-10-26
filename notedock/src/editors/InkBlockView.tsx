@@ -1,15 +1,17 @@
 import { Copy, Palette, Trash2 } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import { INK_LOGICAL_WIDTH, type InkBlock } from '../formats/notedock'
 import { InkEngine, type Selection } from '../ink/InkEngine'
-import type { ToolState } from '../ink/InkToolbar'
-import type { Stroke } from '../ink/model'
+import type { Stroke, Tool } from '../ink/model'
 
 type Props = {
   block: InkBlock
   strokes: Stroke[]
   width: number
-  tools: ToolState
+  /** 選択メニューの表示と「今の色にする」に使う。ツールの設定そのものは親がエンジンに直接反映する */
+  tool: Tool
+  penColor: string
+  finger: boolean
   holdMs: number
   readOnly: boolean
   scroller: HTMLElement | null
@@ -20,15 +22,15 @@ type Props = {
 }
 
 /** 手書きブロック。横幅は表示幅に合わせ、論理座標（横幅1000）を拡大縮小して表示する */
-export default function InkBlockView({ block, strokes, width, tools, holdMs, readOnly, scroller, onEngine, onChange, onHistory, onGrow }: Props) {
+function InkBlockView({ block, strokes, width, tool, penColor, finger, holdMs, readOnly, scroller, onEngine, onChange, onHistory, onGrow }: Props) {
   const hostRef = useRef<HTMLDivElement>(null)
   const engineRef = useRef<InkEngine | null>(null)
   const [selection, setSelection] = useState<Selection | null>(null)
   const scale = width / INK_LOGICAL_WIDTH
   // エンジンからは常に最新の値を読む
-  const live = useRef({ scale, holdMs, finger: tools.finger, readOnly, scroller, onChange, onHistory, onGrow })
+  const live = useRef({ scale, holdMs, finger, readOnly, scroller, onChange, onHistory, onGrow })
   useEffect(() => {
-    live.current = { scale, holdMs, finger: tools.finger, readOnly, scroller, onChange, onHistory, onGrow }
+    live.current = { scale, holdMs, finger, readOnly, scroller, onChange, onHistory, onGrow }
   })
 
   useEffect(() => {
@@ -55,18 +57,6 @@ export default function InkBlockView({ block, strokes, width, tools, holdMs, rea
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [block.id])
 
-  // ツールの設定をエンジンに反映する
-  useEffect(() => {
-    const e = engineRef.current
-    if (!e) return
-    e.setTool(tools.tool)
-    e.color = tools.penColor
-    e.markerColor = tools.markerColor
-    e.penLevel = tools.penLevel
-    e.markerLevel = tools.markerLevel
-    e.eraserLevel = tools.eraserLevel
-  }, [tools])
-
   // 大きさ・拡大率が変わったら描き直す
   useEffect(() => {
     engineRef.current?.refresh()
@@ -82,10 +72,10 @@ export default function InkBlockView({ block, strokes, width, tools, holdMs, rea
         style={{ backgroundSize: `${gridSize}px ${gridSize}px` }}
         aria-label="手書き"
       />
-      {sel && tools.tool === 'lasso' && (
+      {sel && tool === 'lasso' && (
         <div className="selection-toolbar" style={{ left: Math.max(4, Math.min(width - 200, sel.x * scale)), top: Math.max(4, sel.y * scale - 48) }}>
-          <button className="btn small" onClick={() => engineRef.current?.recolorSelection(tools.penColor)} title="今の色にする">
-            <Palette size={16} /><span className="swatch" style={{ background: tools.penColor }} />
+          <button className="btn small" onClick={() => engineRef.current?.recolorSelection(penColor)} title="今の色にする">
+            <Palette size={16} /><span className="swatch" style={{ background: penColor }} />
           </button>
           <button className="btn small" onClick={() => engineRef.current?.duplicateSelection()}><Copy size={16} /> 複製</button>
           <button className="btn small btn-danger" onClick={() => engineRef.current?.deleteSelection()}><Trash2 size={16} /> 削除</button>
@@ -94,3 +84,6 @@ export default function InkBlockView({ block, strokes, width, tools, holdMs, rea
     </div>
   )
 }
+
+// ツールを切り替えたときに、手書き面を作り直したり描き直したりしないようにする
+export default memo(InkBlockView)

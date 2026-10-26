@@ -11,6 +11,15 @@ import InkBlockView from './InkBlockView'
 
 const SAVE_DELAY_MS = 1000
 
+function applyTools(e: InkEngine, t: ToolState) {
+  e.setTool(t.tool)
+  e.color = t.penColor
+  e.markerColor = t.markerColor
+  e.penLevel = t.penLevel
+  e.markerLevel = t.markerLevel
+  e.eraserLevel = t.eraserLevel
+}
+
 /** .notedock のエディタ。段階2では手書きブロックを扱う（テキスト・画像ブロックは段階4） */
 export default function NoteEditor({ projectId, path }: { projectId: string; path: string }) {
   const settings = useAppStore((s) => s.settings)
@@ -33,6 +42,11 @@ export default function NoteEditor({ projectId, path }: { projectId: string; pat
     finger: settings.fingerDrawDefault,
   }))
   const engines = useRef(new Map<string, InkEngine>())
+  const settingsTimer = useRef<number | undefined>(undefined)
+  const toolsRef = useRef(tools)
+  useEffect(() => {
+    toolsRef.current = tools
+  }, [tools])
   const activeBlock = useRef<string | null>(null)
   const pendingInk = useRef(new Map<string, Stroke[]>())
   const noteDirty = useRef(false)
@@ -164,7 +178,10 @@ export default function NoteEditor({ projectId, path }: { projectId: string; pat
   }, [])
 
   const onEngine = useCallback((blockId: string, engine: InkEngine | null) => {
-    if (engine) engines.current.set(blockId, engine)
+    if (engine) {
+      engines.current.set(blockId, engine)
+      applyTools(engine, toolsRef.current)
+    }
     else engines.current.delete(blockId)
   }, [])
 
@@ -176,13 +193,18 @@ export default function NoteEditor({ projectId, path }: { projectId: string; pat
 
   const changeTools = (patch: Partial<ToolState>) => {
     const next = { ...tools, ...patch }
+    // React の再描画を待たずに、手書き面へすぐ反映する
+    for (const e of engines.current.values()) applyTools(e, next)
     setTools(next)
-    // 色と太さはツールごとに記憶する（指で描くは開いたファイルごと）
+    // 色と太さはツールごとに記憶する（指で描くは開いたファイルごと）。保存は少しまとめてから行う
     if ('penColor' in patch || 'markerColor' in patch || 'penLevel' in patch || 'markerLevel' in patch || 'eraserLevel' in patch) {
-      void updateSettings({
-        tools: { pen: { color: next.penColor, sizeLevel: next.penLevel }, marker: { color: next.markerColor, sizeLevel: next.markerLevel } },
-        eraserLevel: next.eraserLevel,
-      })
+      window.clearTimeout(settingsTimer.current)
+      settingsTimer.current = window.setTimeout(() => {
+        void updateSettings({
+          tools: { pen: { color: next.penColor, sizeLevel: next.penLevel }, marker: { color: next.markerColor, sizeLevel: next.markerLevel } },
+          eraserLevel: next.eraserLevel,
+        })
+      }, 800)
     }
   }
 
@@ -238,7 +260,9 @@ export default function NoteEditor({ projectId, path }: { projectId: string; pat
               block={b}
               strokes={inks[b.id] ?? []}
               width={width}
-              tools={tools}
+              tool={tools.tool}
+              penColor={tools.penColor}
+              finger={tools.finger}
               holdMs={settings.lineSnapHoldMs}
               readOnly={readOnly}
               scroller={scroller}

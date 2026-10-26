@@ -429,9 +429,13 @@ button {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex-wrap: wrap;
+  row-gap: 4px;
   padding: 6px 8px;
   border-bottom: 1px solid var(--border);
-  overflow-x: auto;
+  /* スクロール領域にすると、iPad はタップかスクロールかを見極めるまでボタンの反応が遅れる。
+     折り返して並べ、ツールバーではスクロールもズームもさせない */
+  touch-action: none;
   -webkit-user-select: none;
   user-select: none;
   -webkit-touch-callout: none;
@@ -494,5 +498,3 @@ button {
 @media (max-width: 700px) {
   .finger-label { display: none; }
 }
-.ink-toolbar { scrollbar-width: none; }
-.ink-toolbar::-webkit-scrollbar { display: none; }
