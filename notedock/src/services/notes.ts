@@ -1,5 +1,5 @@
 import { unzipSync, zipSync, type Zippable } from 'fflate'
-import { inkPath, migrateInk, migrateNote, newHandwritingNote, newMixedNote, NOTE_EXT, NOTE_JSON, type ImageBlock, type InkData, type NoteDoc } from '../formats/notedock'
+import { INK_NOTE_EXT, inkPath, isNoteExt, migrateInk, migrateNote, newHandwritingNote, newMixedNote, NOTE_EXT, NOTE_JSON, type ImageBlock, type InkData, type NoteDoc } from '../formats/notedock'
 import { prepareImage } from '../io/images'
 import { projectFilesDir } from '../formats/project'
 import { roundStroke, type Stroke } from '../ink/model'
@@ -11,13 +11,14 @@ import { AppError, touchProject } from './projects'
 
 const abs = (projectId: string, notePath: string, inner = '') => joinPath(projectFilesDir(projectId), notePath, inner)
 
-export function withNoteExt(name: string) {
-  return extname(name) === NOTE_EXT ? name : `${name}.${NOTE_EXT}`
+/** ノートの拡張子（.notedock / .inkdock）が付いていなければ付ける */
+export function withNoteExt(name: string, ext: string = NOTE_EXT) {
+  return isNoteExt(extname(name)) ? name : `${name}.${ext}`
 }
 
 /** 新しいノートを作る。kind: handwriting = 手書きブロック1つ、mixed = 文章から始まる混在ノート */
 export async function createNote(projectId: string, parent: string, name: string, kind: 'handwriting' | 'mixed'): Promise<string> {
-  const fileName = withNoteExt(name)
+  const fileName = withNoteExt(name, kind === 'mixed' ? NOTE_EXT : INK_NOTE_EXT)
   const error = validateName(fileName)
   if (error) throw new AppError(error)
   const path = joinPath(parent, await availableName(projectId, parent, fileName))
@@ -89,7 +90,7 @@ export async function readNoteFile(projectId: string, notePath: string, inner: s
   return getStorage().readFile(abs(projectId, notePath, inner))
 }
 
-/** ノートのフォルダの中身を ZIP にする（書き出し用の .notedock ファイル） */
+/** ノートのフォルダの中身を ZIP にする（書き出し用の .notedock / .inkdock ファイル） */
 export async function zipNote(projectId: string, notePath: string): Promise<Uint8Array> {
   const storage = getStorage()
   const entries: Zippable = {}
@@ -104,7 +105,7 @@ export async function zipNote(projectId: string, notePath: string): Promise<Uint
   return zipSync(entries)
 }
 
-/** .notedock（ZIP）を取り込み、ノートのフォルダとして展開する */
+/** .notedock / .inkdock（ZIP）を取り込み、ノートのフォルダとして展開する */
 export async function importNoteZip(projectId: string, parent: string, name: string, bytes: Uint8Array): Promise<string> {
   let files: Record<string, Uint8Array>
   try {

@@ -1,6 +1,7 @@
 import { memo, useEffect, useRef, useState } from 'react'
 import type { InkSidecar } from '../../formats/inkSidecar'
-import type { ImageBlock } from '../../formats/notedock'
+import ResizeHandle from '../../components/ResizeHandle'
+import { MIN_IMAGE_RATIO, type ImageBlock } from '../../formats/notedock'
 import type { InkEngine } from '../../ink/InkEngine'
 import type { Stroke, Tool } from '../../ink/model'
 import { loadSidecar } from '../../services/annotations'
@@ -21,10 +22,15 @@ type Props = {
   onEngine: (key: string, engine: InkEngine | null) => void
   onHistory: (key: string, canUndo: boolean, canRedo: boolean) => void
   onInkChange: (block: ImageBlock, sidecar: InkSidecar) => void
+  /** 右下のつまみで表示幅（ノートの幅に対する割合）を変える */
+  onResize?: (blockId: string, ratio: number) => void
 }
 
 /** 画像のブロック。画像の上に書き込める（座標は画像のピクセル。付属ファイルは images/xxx.jpg.ink.json） */
-function ImageBlockView({ projectId, notePath, block, width, tool, penColor, finger, holdMs, readOnly, scroller, onEngine, onHistory, onInkChange }: Props) {
+function ImageBlockView({ projectId, notePath, block, width: noteWidth, tool, penColor, finger, holdMs, readOnly, scroller, onEngine, onHistory, onInkChange, onResize }: Props) {
+  const ratio = Math.min(1, Math.max(MIN_IMAGE_RATIO, block.displayRatio ?? 1))
+  const width = Math.round(noteWidth * ratio)
+  const startWidth = useRef(width)
   const [url, setUrl] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const sidecar = useRef<InkSidecar | null>(null)
@@ -54,6 +60,7 @@ function ImageBlockView({ projectId, notePath, block, width, tool, penColor, fin
   if (error) return <div className="block-placeholder">画像を表示できません: {error}</div>
 
   return (
+    <div className="image-block-row">
     <div className="image-block" style={{ width, height }}>
       {url && (
         <>
@@ -81,6 +88,15 @@ function ImageBlockView({ projectId, notePath, block, width, tool, penColor, fin
           />
         </>
       )}
+      {onResize && !readOnly && url && (
+        <ResizeHandle
+          className="resize-corner"
+          label="ドラッグして大きさを変える"
+          onStart={() => (startWidth.current = width)}
+          onDrag={(dx) => onResize(block.id, Math.min(1, Math.max(MIN_IMAGE_RATIO, Math.round(((startWidth.current + dx) / noteWidth) * 100) / 100)))}
+        />
+      )}
+    </div>
     </div>
   )
 }

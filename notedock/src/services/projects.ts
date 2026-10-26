@@ -1,6 +1,7 @@
 import { migrateProjectMeta, PROJECTS_DIR, projectDir, projectFilesDir, projectMetaPath, type ProjectMeta } from '../formats/project'
 import { getStorage } from '../storage'
-import { isSidecar, TMP_SUFFIX, validateName } from '../storage/paths'
+import { isNoteExt } from '../formats/notedock'
+import { extname, isSidecar, TMP_SUFFIX, validateName } from '../storage/paths'
 import { NotFoundError } from '../storage/StorageService'
 
 export type ProjectSummary = ProjectMeta & { fileCount?: number }
@@ -75,7 +76,7 @@ export async function countFiles(id: string): Promise<number> {
   const walk = async (dir: string): Promise<number> => {
     let n = 0
     for (const e of await storage.listDir(dir)) {
-      if (e.kind === 'dir') n += e.name.endsWith('.notedock') ? 1 : await walk(`${dir}/${e.name}`)
+      if (e.kind === 'dir') n += isNoteExt(extname(e.name)) ? 1 : await walk(`${dir}/${e.name}`)
       else if (!isSidecar(e.name) && !e.name.endsWith(TMP_SUFFIX)) n++
     }
     return n

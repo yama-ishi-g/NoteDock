@@ -3,7 +3,7 @@ import { projectFilesDir } from '../formats/project'
 import { setStorage } from '../storage'
 import { MemoryStorage } from '../storage/MemoryStorage'
 import { listChildren, renameEntry } from './files'
-import { cleanupNote, copyNoteFile, createHandwritingNote, createNote, importNoteZip, loadInk, loadNote, saveInk, saveNote, zipNote } from './notes'
+import { cleanupNote, copyNoteFile, createHandwritingNote, createNote, importNoteZip, loadInk, loadNote, saveInk, saveNote, withNoteExt, zipNote } from './notes'
 import { createProject } from './projects'
 
 let storage: MemoryStorage
@@ -17,16 +17,28 @@ beforeEach(async () => {
 
 const stroke = (id: string) => ({ id, tool: 'pen' as const, color: '#000000', size: 4, opacity: 1, points: [1.234567, 2, 0.51234, 3.7, 10, 20, 0.5, 20] })
 
+describe('withNoteExt', () => {
+  it('ノートの拡張子がなければ付け、どちらかが付いていればそのまま', () => {
+    expect(withNoteExt('a')).toBe('a.notedock')
+    expect(withNoteExt('a', 'inkdock')).toBe('a.inkdock')
+    expect(withNoteExt('a.inkdock')).toBe('a.inkdock')
+    expect(withNoteExt('a.notedock', 'inkdock')).toBe('a.notedock')
+  })
+})
+
 describe('手書きノート', () => {
   it('作成すると手書きブロック1つのノートになり、ツリーでは1つのファイルに見える', async () => {
     const path = await createHandwritingNote(pid, '', '図')
-    expect(path).toBe('図.notedock')
+    expect(path).toBe('図.inkdock')
     const note = await loadNote(pid, path)
     expect(note.blocks).toHaveLength(1)
     expect(note.blocks[0]).toMatchObject({ type: 'ink', background: 'grid' })
     expect(await loadInk(pid, path, note.blocks[0].id)).toEqual([])
-    expect((await listChildren(pid, ''))[0]).toMatchObject({ name: '図.notedock', kind: 'file', fileType: 'note' })
-    expect(await createHandwritingNote(pid, '', '図.notedock')).toBe('図 (2).notedock')
+    expect((await listChildren(pid, ''))[0]).toMatchObject({ name: '図.inkdock', kind: 'file', fileType: 'inknote' })
+    expect(await createHandwritingNote(pid, '', '図.inkdock')).toBe('図 (2).inkdock')
+    // 混在ノートは .notedock
+    expect(await createNote(pid, '', '図', 'mixed')).toBe('図.notedock')
+    expect((await listChildren(pid, '')).map((n) => n.fileType)).toEqual(['inknote', 'inknote', 'note'])
   })
 
   it('線を保存すると数値が丸められる', async () => {
@@ -40,7 +52,7 @@ describe('手書きノート', () => {
     const path = await createHandwritingNote(pid, '', '図')
     const id = (await loadNote(pid, path)).blocks[0].id
     await saveInk(pid, path, id, [stroke('a')])
-    const to = await renameEntry(pid, path, '設計図.notedock')
+    const to = await renameEntry(pid, path, '設計図.inkdock')
     expect(await loadInk(pid, to, id)).toHaveLength(1)
   })
 
@@ -58,8 +70,8 @@ describe('手書きノート', () => {
     const id = (await loadNote(pid, path)).blocks[0].id
     await saveInk(pid, path, id, [stroke('a'), stroke('b')])
     const zip = await zipNote(pid, path)
-    const imported = await importNoteZip(pid, '', '図.notedock', zip)
-    expect(imported).toBe('図 (2).notedock')
+    const imported = await importNoteZip(pid, '', '図.inkdock', zip)
+    expect(imported).toBe('図 (2).inkdock')
     expect(await loadInk(pid, imported, id)).toHaveLength(2)
     await expect(importNoteZip(pid, '', 'x.notedock', new Uint8Array([1, 2, 3]))).rejects.toThrow()
   })

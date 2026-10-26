@@ -1,5 +1,5 @@
 import {
-  ArrowLeft, Camera, Copy, FileText, FileType2, FolderInput, FolderPlus, NotebookPen, NotebookText, Pencil, Plus, Settings, Share, Trash2, Upload, PanelLeft,
+  ArrowLeft, Camera, Copy, FileText, FileType2, FolderInput, FolderPlus, NotebookText, Pencil, PenTool, Plus, Settings, Share, Trash2, Upload, PanelLeft,
 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Banner, PopupMenu, SaveIndicator, type MenuState } from '../components/common'
@@ -18,11 +18,11 @@ import { importFiles, IMPORT_ACCEPT } from '../io/importFiles'
 import { dateStamp } from '../io/projectZip'
 import { makeFile, shareFile } from '../io/share'
 import { zipFolder } from '../io/folderZip'
-import { createFile, createFolder, deleteEntry, duplicateEntry, entryExists, fileTypeOf, listChildren, moveEntry, readEntry, renameEntry, type TreeNode } from '../services/files'
+import { createFile, createFolder, deleteEntry, duplicateEntry, entryExists, fileTypeOf, isNoteType, listChildren, moveEntry, readEntry, renameEntry, type TreeNode } from '../services/files'
 import { getProject, recoverTempFiles, saveProject } from '../services/projects'
 import { reportError, useAppStore } from '../state/appStore'
 import { dialogs } from '../state/dialogs'
-import { basename, dirname, validateName } from '../storage/paths'
+import { basename, dirname, extname, validateName } from '../storage/paths'
 import type { ProjectMeta } from '../formats/project'
 import { storageKey } from '../lib/channel'
 
@@ -238,7 +238,7 @@ export default function ProjectView({ projectId }: { projectId: string }) {
         persistTree(next)
       }
       await refresh(parent)
-      open({ name: basename(path), path, kind: 'file', fileType: 'note' })
+      open({ name: basename(path), path, kind: 'file', fileType: fileTypeOf(path) })
     } catch (err) {
       reportError(err)
     }
@@ -247,8 +247,8 @@ export default function ProjectView({ projectId }: { projectId: string }) {
   const rename = async (node: TreeNode) => {
     if (guard()) return
     const input = await dialogs.prompt({ title: '名前の変更', label: '新しい名前', initial: node.name, okLabel: '変更', selectStem: node.kind === 'file', validate: validateName })
-    // ノートは拡張子 .notedock を外すとフォルダになってしまうため、付け直す
-    const name = input && node.fileType === 'note' ? withNoteExt(input) : input
+    // ノートは拡張子（.notedock / .inkdock）を外すとフォルダになってしまうため、付け直す（もう一方の拡張子への変更はできる）
+    const name = input && isNoteType(node.fileType) ? withNoteExt(input, extname(node.name)) : input
     if (!name || name === node.name) return
     try {
       if (touchesOpenFile(node.path)) await activeEditor.flush()
@@ -318,11 +318,11 @@ export default function ProjectView({ projectId }: { projectId: string }) {
       if (touchesOpenFile(node.path)) await activeEditor.flush()
       // ノートは書き出し方を選んでもらう
       let noteFormat: 'notedock' | 'markdown' | 'pdf' = 'notedock'
-      if (node.fileType === 'note') {
+      if (isNoteType(node.fileType)) {
         const choice = await dialogs.choose({
           title: 'ノートの書き出し方',
           options: [
-            { value: 'notedock' as const, label: '.notedock ファイル（NoteDockで開ける）' },
+            { value: 'notedock' as const, label: `.${extname(node.name)} ファイル（NoteDockで開ける）` },
             { value: 'markdown' as const, label: 'Markdown＋画像（ZIP）' },
             { value: 'pdf' as const, label: 'PDF（印刷画面から保存）' },
           ],
@@ -361,14 +361,14 @@ export default function ProjectView({ projectId }: { projectId: string }) {
         ? node.fileType === 'pdf'
           ? await burnPdf(projectId, node.path, burn)
           : await burnImage(projectId, node.path, burn)
-        : node.fileType === 'note'
+        : isNoteType(node.fileType)
           ? noteFormat === 'markdown'
             ? await exportNoteMarkdown(projectId, node.path)
             : makeFile(await zipNote(projectId, node.path), node.name)
           : node.kind === 'dir'
             ? makeFile(await zipFolder(projectId, node.path), `${node.name}_${dateStamp()}.zip`)
             : makeFile(await readEntry(projectId, node.path), node.name)
-      if (node.kind === 'dir' || node.fileType === 'note' || burn) {
+      if (node.kind === 'dir' || isNoteType(node.fileType) || burn) {
         // ZIP の作成に時間がかかると共有シートを開けないため、もう一度タップしてもらう
         const ok = await dialogs.confirm({ title: '書き出しの準備ができました', message: file.name, okLabel: '共有・保存' })
         if (!ok) return
@@ -413,7 +413,7 @@ export default function ProjectView({ projectId }: { projectId: string }) {
     { label: '新しいテキスト（.txt）', icon: <FileText size={16} />, onSelect: () => newFile(dir, 'txt') },
     { label: '新しいMarkdown（.md）', icon: <FileType2 size={16} />, onSelect: () => newFile(dir, 'md') },
     { label: '新しいノート（文章・手書き・画像）', icon: <NotebookText size={16} />, onSelect: () => newNote(dir, 'mixed') },
-    { label: '新しい手書きノート', icon: <NotebookPen size={16} />, onSelect: () => newNote(dir, 'handwriting') },
+    { label: '新しい手書きノート', icon: <PenTool size={16} />, onSelect: () => newNote(dir, 'handwriting') },
     'separator' as const,
     { label: 'ファイルを取り込む', icon: <Upload size={16} />, onSelect: () => startImport(dir, false) },
     { label: 'カメラで撮る', icon: <Camera size={16} />, onSelect: () => startImport(dir, true) },
@@ -514,7 +514,7 @@ export default function ProjectView({ projectId }: { projectId: string }) {
                 )}
                 {openType === 'image' && <ImageViewer key={openFile} projectId={projectId} path={openFile} />}
                 {openType === 'pdf' && <PdfViewer key={openFile} projectId={projectId} path={openFile} />}
-                {openType === 'note' && <NoteEditor key={openFile} projectId={projectId} path={openFile} />}
+                {isNoteType(openType) && <NoteEditor key={openFile} projectId={projectId} path={openFile} />}
                 {openType === 'other' && (
                   <div className="editor-message">
                     <p>このファイルは表示できません。</p>

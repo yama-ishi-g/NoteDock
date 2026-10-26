@@ -172,6 +172,14 @@ export default function NoteEditor({ projectId, path }: { projectId: string; pat
     }))
   }, [updateNote])
 
+  const resizeInk = useCallback((blockId: string, height: number) => {
+    updateNote((n) => ({ ...n, blocks: n.blocks.map((b) => (b.id === blockId && b.type === 'ink' ? { ...b, height } : b)) }))
+  }, [updateNote])
+
+  const resizeImage = useCallback((blockId: string, displayRatio: number) => {
+    updateNote((n) => ({ ...n, blocks: n.blocks.map((b) => (b.id === blockId && b.type === 'image' ? { ...b, displayRatio } : b)) }))
+  }, [updateNote])
+
   const insertBlock = (index: number, block: Block) => {
     if (block.type === 'ink') {
       setInks((m) => ({ ...m, [block.id]: [] }))
@@ -352,6 +360,7 @@ export default function NoteEditor({ projectId, path }: { projectId: string; pat
                       onChange={onInkChange}
                       onHistory={session.onHistory}
                       onGrow={onGrow}
+                      onResize={handwritingOnly ? undefined : resizeInk}
                     />
                   )}
                   {b.type === 'text' && (
@@ -381,6 +390,7 @@ export default function NoteEditor({ projectId, path }: { projectId: string; pat
                       onEngine={session.onEngine}
                       onHistory={session.onHistory}
                       onInkChange={onImageInkChange}
+                      onResize={resizeImage}
                     />
                   )}
                   {!handwritingOnly && !readOnly && (

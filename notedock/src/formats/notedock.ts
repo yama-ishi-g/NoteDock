@@ -1,10 +1,15 @@
 import type { Stroke } from '../ink/model'
 
-// 混在ノート（.notedock）の形式（内部仕様書 5.4）。アプリ内ではフォルダとして持つ
+// ノートの形式（内部仕様書 5.4）。アプリ内ではフォルダとして持つ
+//   .notedock  混在ノート（文章・手書き・画像）
+//   .inkdock   手書きノート（手書きブロック1つ。形式は .notedock と同じ。ツリーで見分けるために拡張子を分ける）
 //   note.json            ノートの構成
 //   ink/{blockId}.json   手書きブロックの線
 
 export const NOTE_EXT = 'notedock'
+export const INK_NOTE_EXT = 'inkdock'
+export const NOTE_EXTS = [NOTE_EXT, INK_NOTE_EXT] as const
+export const isNoteExt = (ext: string) => (NOTE_EXTS as readonly string[]).includes(ext.toLowerCase())
 export const NOTE_JSON = 'note.json'
 /** 手書きブロックの論理座標の横幅 */
 export const INK_LOGICAL_WIDTH = 1000
@@ -13,12 +18,26 @@ export const DEFAULT_INK_HEIGHT = 1400
 export const GROW_STEP = 400
 /** 混在ノートに追加する手書きブロックの高さ（論理座標） */
 export const BLOCK_INK_HEIGHT = 500
+/** つまみで縮められる手書きブロックの最小の高さ（論理座標） */
+export const MIN_INK_HEIGHT = 120
+/** 画像ブロックの表示幅（ノートの幅に対する割合）の範囲 */
+export const MIN_IMAGE_RATIO = 0.2
 
 export type InkBackground = 'plain' | 'grid'
 
 export type TextBlock = { id: string; type: 'text'; markdown: string }
 export type InkBlock = { id: string; type: 'ink'; height: number; background: InkBackground }
-export type ImageBlock = { id: string; type: 'image'; src: string; width: number; height: number; caption?: string }
+export type ImageBlock = {
+  id: string
+  type: 'image'
+  src: string
+  /** 画像のピクセル数 */
+  width: number
+  height: number
+  caption?: string
+  /** 表示幅（ノートの幅に対する割合、0.2〜1）。なければ 1 */
+  displayRatio?: number
+}
 export type Block = TextBlock | InkBlock | ImageBlock
 
 export type NoteDoc = {

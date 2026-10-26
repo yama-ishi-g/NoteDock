@@ -601,3 +601,60 @@ button {
   font-size: 13px;
   text-align: center;
 }
+.icon-note { color: #185fa5; }
+.icon-inknote { color: #d85a30; }
+@media (prefers-color-scheme: dark) {
+  .icon-note { color: #85b7eb; }
+  .icon-inknote { color: #f0997b; }
+}
+.tree-row.active .icon-note, .tree-row.active .icon-inknote { color: inherit; }
+
+/* ブロックの大きさを変えるつまみ */
+.resize-handle {
+  position: absolute;
+  z-index: 4;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+.resize-bottom {
+  left: 50%;
+  bottom: -9px;
+  width: 72px;
+  height: 18px;
+  margin-left: -36px;
+  cursor: ns-resize;
+}
+.resize-bottom::after {
+  content: '';
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  top: 6px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--accent);
+  opacity: 0.55;
+}
+.resize-corner {
+  right: -10px;
+  bottom: -10px;
+  width: 28px;
+  height: 28px;
+  cursor: nwse-resize;
+}
+.resize-corner::after {
+  content: '';
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  width: 14px;
+  height: 14px;
+  border-right: 4px solid var(--accent);
+  border-bottom: 4px solid var(--accent);
+  border-bottom-right-radius: 4px;
+  opacity: 0.7;
+}
+.resize-handle:hover::after { opacity: 1; }
+.image-block-row { display: flex; justify-content: center; background: var(--bg); }

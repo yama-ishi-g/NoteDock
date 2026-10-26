@@ -1,6 +1,7 @@
 import { Copy, Palette, Trash2 } from 'lucide-react'
 import { memo, useEffect, useRef, useState } from 'react'
-import { INK_LOGICAL_WIDTH, type InkBlock } from '../formats/notedock'
+import ResizeHandle from '../components/ResizeHandle'
+import { INK_LOGICAL_WIDTH, MIN_INK_HEIGHT, type InkBlock } from '../formats/notedock'
 import { InkEngine, type Selection } from '../ink/InkEngine'
 import type { Stroke, Tool } from '../ink/model'
 
@@ -19,10 +20,13 @@ type Props = {
   onChange: (blockId: string, strokes: Stroke[]) => void
   onHistory: (blockId: string, canUndo: boolean, canRedo: boolean) => void
   onGrow: (blockId: string, y: number) => void
+  /** 渡したときは、下端のつまみで高さを変えられる（混在ノート） */
+  onResize?: (blockId: string, height: number) => void
 }
 
 /** 手書きブロック。横幅は表示幅に合わせ、論理座標（横幅1000）を拡大縮小して表示する */
-function InkBlockView({ block, strokes, width, tool, penColor, finger, holdMs, readOnly, scroller, onEngine, onChange, onHistory, onGrow }: Props) {
+function InkBlockView({ block, strokes, width, tool, penColor, finger, holdMs, readOnly, scroller, onEngine, onChange, onHistory, onGrow, onResize }: Props) {
+  const startHeight = useRef(block.height)
   const hostRef = useRef<HTMLDivElement>(null)
   const engineRef = useRef<InkEngine | null>(null)
   const [selection, setSelection] = useState<Selection | null>(null)
@@ -80,6 +84,14 @@ function InkBlockView({ block, strokes, width, tool, penColor, finger, holdMs, r
           <button className="btn small" onClick={() => engineRef.current?.duplicateSelection()}><Copy size={16} /> 複製</button>
           <button className="btn small btn-danger" onClick={() => engineRef.current?.deleteSelection()}><Trash2 size={16} /> 削除</button>
         </div>
+      )}
+      {onResize && !readOnly && (
+        <ResizeHandle
+          className="resize-bottom"
+          label="ドラッグして高さを変える"
+          onStart={() => (startHeight.current = block.height)}
+          onDrag={(_dx, dy) => onResize(block.id, Math.max(MIN_INK_HEIGHT, Math.round(startHeight.current + dy / scale)))}
+        />
       )}
     </div>
   )

@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight, File, FileImage, FileText, FileType2, Folder, FolderOpen, MoreHorizontal, NotebookPen } from 'lucide-react'
+import { ChevronDown, ChevronRight, File, FileImage, FileText, FileType2, Folder, FolderOpen, MoreHorizontal, NotebookText, PenTool } from 'lucide-react'
 import type { ReactNode } from 'react'
 import type { FileType, TreeNode } from '../services/files'
 import { useLongPress } from './useLongPress'
@@ -8,7 +8,8 @@ const fileIcon: Record<FileType, ReactNode> = {
   markdown: <FileType2 size={16} />,
   pdf: <File size={16} className="icon-pdf" />,
   image: <FileImage size={16} />,
-  note: <NotebookPen size={16} />,
+  note: <NotebookText size={16} className="icon-note" />,
+  inknote: <PenTool size={16} className="icon-inknote" />,
   other: <File size={16} />,
 }
 

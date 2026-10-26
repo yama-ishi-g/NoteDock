@@ -2,7 +2,7 @@ import { zipSync, type Zippable } from 'fflate'
 import { readEntry, walkFiles } from '../services/files'
 import { toBytes } from '../storage/StorageService'
 
-const STORED_EXT = /\.(pdf|png|jpe?g|webp|gif|zip|notedock)$/i
+const STORED_EXT = /\.(pdf|png|jpe?g|webp|gif|zip|notedock|inkdock)$/i
 
 /** プロジェクト内のフォルダを ZIP にする（ZIP の中ではフォルダ名を最上位にする） */
 export async function zipFolder(projectId: string, dir: string): Promise<Uint8Array> {

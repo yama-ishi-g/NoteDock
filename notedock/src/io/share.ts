@@ -13,6 +13,7 @@ const MIME: Record<string, string> = {
   gif: 'image/gif',
   zip: 'application/zip',
   notedock: 'application/zip',
+  inkdock: 'application/zip',
   json: 'application/json',
 }
 

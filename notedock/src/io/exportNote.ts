@@ -40,7 +40,7 @@ function trimmedHeight(strokes: Stroke[], height: number): number {
 }
 
 type Asset = { name: string; blob: Blob }
-type Part = { kind: 'text'; markdown: string } | { kind: 'asset'; asset: Asset; alt: string }
+type Part = { kind: 'text'; markdown: string } | { kind: 'asset'; asset: Asset; alt: string; ratio?: number }
 
 /** ノートを、文章と画像（手書き・書き込みを合成した画像）の並びにする */
 async function collectParts(projectId: string, notePath: string, note: NoteDoc): Promise<Part[]> {
@@ -61,7 +61,7 @@ async function collectParts(projectId: string, notePath: string, note: NoteDoc):
       const jpeg = ['jpg', 'jpeg'].includes(extname(b.src))
       const blob = strokes.length ? await composeImage(file, strokes, jpeg) : file
       const ext = strokes.length ? (jpeg ? 'jpg' : 'png') : extname(b.src) || 'jpg'
-      parts.push({ kind: 'asset', alt: b.caption ?? '画像', asset: { name: `image-${++imageNo}.${ext}`, blob } })
+      parts.push({ kind: 'asset', alt: b.caption ?? '画像', ratio: b.displayRatio, asset: { name: `image-${++imageNo}.${ext}`, blob } })
     }
   }
   return parts
@@ -113,6 +113,7 @@ export async function preparePrint(projectId: string, notePath: string): Promise
       urls.push(url)
       const img = document.createElement('img')
       img.alt = p.alt
+      if (p.ratio && p.ratio < 1) img.style.width = `${Math.round(p.ratio * 100)}%`
       loads.push(new Promise((r) => {
         img.onload = () => r()
         img.onerror = () => r()

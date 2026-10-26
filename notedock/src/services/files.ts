@@ -1,3 +1,4 @@
+import { isNoteExt } from '../formats/notedock'
 import { projectFilesDir } from '../formats/project'
 import { getStorage } from '../storage'
 import { basename, dirname, extname, isSidecar, joinPath, sidecarOf, TMP_SUFFIX, uniqueName, validateName } from '../storage/paths'
@@ -5,7 +6,10 @@ import { AppError, touchProject } from './projects'
 
 // プロジェクト内のパスは files/ からの相対パス（ルートは ''）
 
-export type FileType = 'text' | 'markdown' | 'pdf' | 'image' | 'note' | 'other'
+export type FileType = 'text' | 'markdown' | 'pdf' | 'image' | 'note' | 'inknote' | 'other'
+
+/** ノート（混在ノート .notedock・手書きノート .inkdock）か */
+export const isNoteType = (t: FileType | undefined | null) => t === 'note' || t === 'inknote'
 
 export type TreeNode = {
   name: string
@@ -24,6 +28,7 @@ export function fileTypeOf(name: string): FileType {
   if (ext === 'md' || ext === 'markdown') return 'markdown'
   if (ext === 'pdf') return 'pdf'
   if (ext === 'notedock') return 'note'
+  if (ext === 'inkdock') return 'inknote'
   if (IMAGE_EXTS.has(ext)) return 'image'
   return 'other'
 }
@@ -41,8 +46,8 @@ export async function listChildren(projectId: string, dir: string): Promise<Tree
     if (e.name.endsWith(TMP_SUFFIX)) continue
     if (e.kind === 'file' && isSidecar(e.name) && names.has(e.name.slice(0, -'.ink.json'.length))) continue
     const path = joinPath(dir, e.name)
-    // .notedock はアプリ内ではフォルダだが、ツリーでは1つのファイルとして扱う
-    if (e.kind === 'dir' && extname(e.name) !== 'notedock') nodes.push({ name: e.name, path, kind: 'dir' })
+    // ノート（.notedock / .inkdock）はアプリ内ではフォルダだが、ツリーでは1つのファイルとして扱う
+    if (e.kind === 'dir' && !isNoteExt(extname(e.name))) nodes.push({ name: e.name, path, kind: 'dir' })
     else nodes.push({ name: e.name, path, kind: 'file', fileType: fileTypeOf(e.name), size: e.size })
   }
   return nodes.sort((a, b) => (a.kind === b.kind ? collator.compare(a.name, b.name) : a.kind === 'dir' ? -1 : 1))
