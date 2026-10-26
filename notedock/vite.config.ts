@@ -13,6 +13,8 @@ export default defineConfig(({ command }) => ({
     },
     server: {
         port: 54144,
+        // iPad実機確認用（Cloudflare Tunnel の一時URL）からのアクセスを許可する
+        allowedHosts: ['.trycloudflare.com'],
     },
     test: {
         environment: 'node',
