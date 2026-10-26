@@ -1,0 +1,27 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.14.37806.7 d17.14
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{54A90642-561A-4BB1-A94E-469ADEE60C69}") = "notedock", "NoteDock\notedock.esproj", "{BFDCC055-9BAF-5BAA-DD29-C396C7E4BD0F}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{BFDCC055-9BAF-5BAA-DD29-C396C7E4BD0F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{BFDCC055-9BAF-5BAA-DD29-C396C7E4BD0F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{BFDCC055-9BAF-5BAA-DD29-C396C7E4BD0F}.Debug|Any CPU.Deploy.0 = Debug|Any CPU
+		{BFDCC055-9BAF-5BAA-DD29-C396C7E4BD0F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{BFDCC055-9BAF-5BAA-DD29-C396C7E4BD0F}.Release|Any CPU.Build.0 = Release|Any CPU
+		{BFDCC055-9BAF-5BAA-DD29-C396C7E4BD0F}.Release|Any CPU.Deploy.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {3E7824C6-A18F-4DCC-B407-1C6BA4B75D6C}
+	EndGlobalSection
+EndGlobal
