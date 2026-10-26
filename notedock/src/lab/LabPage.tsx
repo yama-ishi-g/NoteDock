@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import './lab.css'
+import { formatBuildLabel } from '../lib/version'
 import { getReportText } from './report'
 import EnvSection from './EnvSection'
 import OpfsSection from './OpfsSection'
@@ -41,6 +42,7 @@ export default function LabPage() {
         <h1 style={{ flex: 1 }}>実機検証（段階0）</h1>
         <button onClick={copyReport}>結果をコピー</button>
       </div>
+      <p className="hint" style={{ marginTop: 0 }}>{formatBuildLabel()}</p>
       {copied && <p className="hint">{copied}</p>}
       {reportText && <textarea readOnly value={reportText} style={{ minHeight: 160, fontSize: 12 }} />}
       <nav>

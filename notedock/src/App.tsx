@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { appVersion } from './lib/version'
+import { formatBuildLabel } from './lib/version'
 import LabPage from './lab/LabPage'
 
 // 段階0の間だけ、#lab で検証ページを表示する
@@ -28,7 +28,7 @@ function App() {
       }}
     >
       <h1 style={{ margin: 0, fontSize: 32, fontWeight: 600 }}>NoteDock</h1>
-      <p style={{ margin: 0, color: 'var(--text-muted)' }}>v{appVersion}</p>
+      <p style={{ margin: 0, color: 'var(--text-muted)' }}>{formatBuildLabel()}</p>
       <a href="#lab" style={{ marginTop: 24, color: 'var(--accent)' }}>
         実機検証ページを開く
       </a>

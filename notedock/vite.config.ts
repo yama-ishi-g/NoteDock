@@ -2,7 +2,18 @@
 import { defineConfig } from 'vite';
 import plugin from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
+import { execSync } from 'node:child_process';
 import pkg from './package.json' with { type: 'json' };
+
+// 画面に表示して、iPadで新しい版に更新されたかを確かめるためのビルド情報
+function commitHash(): string {
+    if (process.env.GITHUB_SHA) return process.env.GITHUB_SHA.slice(0, 7);
+    try {
+        return execSync('git rev-parse --short HEAD', { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+    } catch {
+        return 'dev';
+    }
+}
 
 // https://vitejs.dev/config/
 export default defineConfig(({ command, isPreview }) => ({
@@ -38,6 +49,8 @@ export default defineConfig(({ command, isPreview }) => ({
     ],
     define: {
         __APP_VERSION__: JSON.stringify(pkg.version),
+        __BUILD_COMMIT__: JSON.stringify(commitHash()),
+        __BUILD_TIME__: JSON.stringify(new Date().toISOString()),
     },
     server: {
         port: 54144,
