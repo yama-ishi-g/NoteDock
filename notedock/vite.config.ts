@@ -22,8 +22,8 @@ export default defineConfig(({ command, isPreview }) => ({
     plugins: [
         plugin(),
         VitePWA({
-            // 段階0は検証しやすさを優先して自動更新。段階1で「更新のお知らせ」方式（prompt）に変える
-            registerType: 'autoUpdate',
+            // 新しい版が届いたら「更新があります」を表示し、利用者の操作で切り替える（編集中の内容を失わないため）
+            registerType: 'prompt',
             includeAssets: ['favicon.svg', 'icons/apple-touch-icon-180.png'],
             manifest: {
                 name: 'NoteDock',
