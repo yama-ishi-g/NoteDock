@@ -1,4 +1,5 @@
 import { createFile } from '../services/files'
+import { importNoteZip } from '../services/notes'
 import { extname } from '../storage/paths'
 import { isImageFile, prepareImage } from './images'
 
@@ -28,8 +29,10 @@ export async function importFiles(projectId: string, dir: string, files: File[],
         const prepared = await prepareImage(file)
         const name = opts.fromCamera ? cameraFileName() : prepared.name
         result.imported.push(await createFile(projectId, dir, name, prepared.data))
+      } else if (ext === 'notedock') {
+        // .notedock（ZIP）はノートのフォルダとして展開する
+        result.imported.push(await importNoteZip(projectId, dir, file.name, new Uint8Array(await file.arrayBuffer())))
       } else if (IMPORT_EXTENSIONS.includes(ext)) {
-        // .notedock（ZIP）の展開は段階4で対応する。それまではそのまま保存する
         result.imported.push(await createFile(projectId, dir, file.name, file))
       } else {
         result.skipped.push({ name: file.name, reason: '取り込めない形式です' })

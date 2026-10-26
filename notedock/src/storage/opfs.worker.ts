@@ -53,12 +53,17 @@ async function safeWrite(path: string, data: Uint8Array) {
   await tmp.move(dir, name)
 }
 
-self.onmessage = async (e: MessageEvent<WriteRequest>) => {
+// 書き込みは届いた順に1つずつ行う（同じファイルへの書き込みが重なると失敗・消失するため）
+let chain: Promise<void> = Promise.resolve()
+
+self.onmessage = (e: MessageEvent<WriteRequest>) => {
   const { id, path, data } = e.data
-  try {
-    await safeWrite(path, new Uint8Array(data))
-    postMessage({ id, ok: true })
-  } catch (err) {
-    postMessage({ id, ok: false, error: err instanceof Error ? `${err.name}: ${err.message}` : String(err) })
-  }
+  chain = chain.then(async () => {
+    try {
+      await safeWrite(path, new Uint8Array(data))
+      postMessage({ id, ok: true })
+    } catch (err) {
+      postMessage({ id, ok: false, error: err instanceof Error ? `${err.name}: ${err.message}` : String(err) })
+    }
+  })
 }

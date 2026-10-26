@@ -7,9 +7,20 @@ type IterableDir = FileSystemDirectoryHandle & { entries(): AsyncIterable<[strin
 const isNotFound = (err: unknown) =>
   err instanceof DOMException && (err.name === 'NotFoundError' || err.name === 'TypeMismatchError')
 
-/** OPFS を使った StorageService。書き込みは Worker 経由、それ以外はメインスレッドで行う */
+/**
+ * OPFS を使った StorageService。書き込みは Worker 経由、それ以外はメインスレッドで行う。
+ * 操作はすべて1つずつ順番に行う。同じファイルへの書き込みが重なると、tmp の削除と移動が入れ違って
+ * ファイルが消えることがあるため（段階2の確認中に発生）。書き換えの途中のファイルを読まないよう、読み込みも順番に並べる
+ */
 export class OpfsStorage implements StorageService {
   private worker: Worker | null = null
+  private queue: Promise<unknown> = Promise.resolve()
+
+  private enqueue<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.queue.then(fn, fn)
+    this.queue = run.catch(() => undefined)
+    return run
+  }
   private nextId = 1
   private pending = new Map<number, { resolve: () => void; reject: (e: Error) => void }>()
 
@@ -51,7 +62,11 @@ export class OpfsStorage implements StorageService {
     }
   }
 
-  async listDir(path: string): Promise<DirEntry[]> {
+  listDir(path: string): Promise<DirEntry[]> {
+    return this.enqueue(() => this.doListDir(path))
+  }
+
+  private async doListDir(path: string): Promise<DirEntry[]> {
     const dir = (await this.dir(path)) as IterableDir
     const entries: DirEntry[] = []
     for await (const [name, handle] of dir.entries()) {
@@ -65,8 +80,14 @@ export class OpfsStorage implements StorageService {
     return entries
   }
 
-  async readFile(path: string): Promise<File> {
-    return (await this.fileHandle(path)).getFile()
+  readFile(path: string): Promise<File> {
+    return this.enqueue(() => this.doReadFile(path))
+  }
+
+  private async doReadFile(path: string): Promise<File> {
+    // File は読んだ時点の内容を指すため、中身もここで読み切る（後の書き換えの影響を受けないように）
+    const file = await (await this.fileHandle(path)).getFile()
+    return new File([await file.arrayBuffer()], file.name, { type: file.type, lastModified: file.lastModified })
   }
 
   async readText(path: string): Promise<string> {
@@ -77,7 +98,11 @@ export class OpfsStorage implements StorageService {
     return JSON.parse(await this.readText(path)) as T
   }
 
-  async writeFile(path: string, data: WriteData): Promise<void> {
+  writeFile(path: string, data: WriteData): Promise<void> {
+    return this.enqueue(() => this.doWriteFile(path, data))
+  }
+
+  private async doWriteFile(path: string, data: WriteData): Promise<void> {
     const p = normalizePath(path)
     const bytes = await toBytes(data)
     // Transfer するためにコピーを作る（呼び出し元のバッファを壊さない）
@@ -93,11 +118,17 @@ export class OpfsStorage implements StorageService {
     await this.writeFile(path, JSON.stringify(data, null, 2))
   }
 
-  async mkdir(path: string): Promise<void> {
-    await this.dir(path, true)
+  mkdir(path: string): Promise<void> {
+    return this.enqueue(async () => {
+      await this.dir(path, true)
+    })
   }
 
-  async move(from: string, to: string): Promise<void> {
+  move(from: string, to: string): Promise<void> {
+    return this.enqueue(() => this.doMove(from, to))
+  }
+
+  private async doMove(from: string, to: string): Promise<void> {
     const src = normalizePath(from)
     const dest = normalizePath(to)
     if (src === dest) return
@@ -111,24 +142,32 @@ export class OpfsStorage implements StorageService {
         // フォルダの move に対応していない環境などは、コピーして削除する
       }
     }
-    await this.copy(src, dest)
-    await this.remove(src)
+    await this.doCopy(src, dest)
+    await this.doRemove(src)
   }
 
-  async copy(from: string, to: string): Promise<void> {
+  copy(from: string, to: string): Promise<void> {
+    return this.enqueue(() => this.doCopy(from, to))
+  }
+
+  private async doCopy(from: string, to: string): Promise<void> {
     const src = normalizePath(from)
     const dest = normalizePath(to)
-    if (await this.isDir(src)) {
-      await this.mkdir(dest)
-      for (const entry of await this.listDir(src)) {
-        await this.copy(`${src}/${entry.name}`, `${dest}/${entry.name}`)
+    if (await this.doIsDir(src)) {
+      await this.dir(dest, true)
+      for (const entry of await this.doListDir(src)) {
+        await this.doCopy(`${src}/${entry.name}`, `${dest}/${entry.name}`)
       }
     } else {
-      await this.writeFile(dest, await this.readFile(src))
+      await this.doWriteFile(dest, await (await this.fileHandle(src)).getFile())
     }
   }
 
-  async remove(path: string): Promise<void> {
+  remove(path: string): Promise<void> {
+    return this.enqueue(() => this.doRemove(path))
+  }
+
+  private async doRemove(path: string): Promise<void> {
     const p = normalizePath(path)
     if (!p) throw new Error('ルートは削除できません')
     const dir = await this.dir(dirname(p))
@@ -140,7 +179,11 @@ export class OpfsStorage implements StorageService {
     }
   }
 
-  async exists(path: string): Promise<boolean> {
+  exists(path: string): Promise<boolean> {
+    return this.enqueue(() => this.doExists(path))
+  }
+
+  private async doExists(path: string): Promise<boolean> {
     try {
       await this.handle(path)
       return true
@@ -150,7 +193,11 @@ export class OpfsStorage implements StorageService {
     }
   }
 
-  async isDir(path: string): Promise<boolean> {
+  isDir(path: string): Promise<boolean> {
+    return this.enqueue(() => this.doIsDir(path))
+  }
+
+  private async doIsDir(path: string): Promise<boolean> {
     try {
       return (await this.handle(path)).kind === 'directory'
     } catch (err) {

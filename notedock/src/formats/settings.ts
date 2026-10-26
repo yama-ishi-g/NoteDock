@@ -7,6 +7,7 @@ export type Settings = {
   editorFont: 'sans' | 'mono'
   exportNaming: 'suffix' | 'original'
   tools: { [tool in InkToolName]: { color: string; sizeLevel: 0 | 1 | 2 } }
+  eraserLevel: 0 | 1 | 2
 }
 
 export const SETTINGS_PATH = 'settings.json'
@@ -22,6 +23,7 @@ export const DEFAULT_SETTINGS: Settings = {
     pen: { color: '#2c2c2a', sizeLevel: 1 },
     marker: { color: '#ef9f27', sizeLevel: 1 },
   },
+  eraserLevel: 1,
 }
 
 export function migrateSettings(raw: unknown): Settings {

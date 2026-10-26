@@ -140,6 +140,10 @@ export async function writeEntry(projectId: string, path: string, data: Blob | U
   await getStorage().writeFile(abs(projectId, path), data)
 }
 
+export async function entryExists(projectId: string, path: string): Promise<boolean> {
+  return getStorage().exists(abs(projectId, path))
+}
+
 export async function isDirEntry(projectId: string, path: string): Promise<boolean> {
   return getStorage().isDir(abs(projectId, path))
 }
