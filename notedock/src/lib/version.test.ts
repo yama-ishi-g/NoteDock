@@ -21,3 +21,10 @@ describe('formatBuildLabel', () => {
     expect(formatBuildLabel('1.0.0', 'x')).toBe('v1.0.0（-）')
   })
 })
+
+describe('formatBuildLabel（開発版）', () => {
+  it('開発版は「開発版」と表示する', () => {
+    const time = new Date(2026, 9, 26, 9, 5).toISOString()
+    expect(formatBuildLabel('1.0.0', time, true)).toBe('v1.0.0 開発版（10/26 09:05）')
+  })
+})

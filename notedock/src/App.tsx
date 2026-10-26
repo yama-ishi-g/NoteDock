@@ -9,6 +9,7 @@ import SettingsScreen from './screens/Settings'
 import { loadSettings } from './services/appData'
 import { useAppStore } from './state/appStore'
 import { requestPersist } from './storage'
+import { isDevChannel, storageKey } from './lib/channel'
 
 // 段階0の検証ページは #lab で開ける（設定画面からも開ける）
 const isLab = () => window.location.hash.startsWith('#lab')
@@ -16,7 +17,7 @@ const isLab = () => window.location.hash.startsWith('#lab')
 const isStandalone = () =>
   window.matchMedia('(display-mode: standalone)').matches || (navigator as Navigator & { standalone?: boolean }).standalone === true
 
-const INSTALL_HINT_KEY = 'notedock:installHintDismissed'
+const INSTALL_HINT_KEY = storageKey('installHintDismissed')
 
 function UpdateBanner() {
   const {
@@ -77,6 +78,7 @@ function App() {
   return (
     <ErrorBoundary>
       <div className="app">
+        {isDevChannel && <div className="dev-band">開発版：本番とは別のデータで動いています</div>}
         <div className="banners">
           <UpdateBanner />
           <InstallHint />

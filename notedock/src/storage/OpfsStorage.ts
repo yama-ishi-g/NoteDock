@@ -1,4 +1,5 @@
-import { basename, dirname, normalizePath } from './paths'
+import { OPFS_ROOT } from '../lib/channel'
+import { basename, dirname, joinPath, normalizePath } from './paths'
 import { NotFoundError, toBytes, type DirEntry, type StorageService, type WriteData } from './StorageService'
 
 type MovableHandle = FileSystemHandle & { move?: (dir: FileSystemDirectoryHandle, name: string) => Promise<void> }
@@ -38,8 +39,14 @@ export class OpfsStorage implements StorageService {
     return this.worker
   }
 
+  /** 保存場所のルート（開発版は専用のフォルダ） */
+  private async root(): Promise<FileSystemDirectoryHandle> {
+    const top = await navigator.storage.getDirectory()
+    return OPFS_ROOT ? top.getDirectoryHandle(OPFS_ROOT, { create: true }) : top
+  }
+
   private async dir(path: string, create = false): Promise<FileSystemDirectoryHandle> {
-    let dir = await navigator.storage.getDirectory()
+    let dir = await this.root()
     for (const part of normalizePath(path).split('/').filter(Boolean)) {
       try {
         dir = await dir.getDirectoryHandle(part, { create })
@@ -110,7 +117,7 @@ export class OpfsStorage implements StorageService {
     const id = this.nextId++
     await new Promise<void>((resolve, reject) => {
       this.pending.set(id, { resolve, reject })
-      this.getWorker().postMessage({ id, path: p, data: buf }, [buf])
+      this.getWorker().postMessage({ id, path: joinPath(OPFS_ROOT, p), data: buf }, [buf])
     })
   }
 
@@ -213,7 +220,7 @@ export class OpfsStorage implements StorageService {
 
   private async handle(path: string): Promise<FileSystemHandle> {
     const p = normalizePath(path)
-    if (!p) return navigator.storage.getDirectory()
+    if (!p) return this.root()
     const dir = await this.dir(dirname(p))
     const name = basename(p)
     try {

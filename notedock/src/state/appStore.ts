@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { DEFAULT_SETTINGS, type Settings } from '../formats/settings'
 import { saveSettings } from '../services/appData'
+import { storageKey } from '../lib/channel'
 
 export type View = { screen: 'list' } | { screen: 'project'; projectId: string } | { screen: 'settings'; back: View }
 
@@ -31,7 +32,7 @@ type AppStore = {
 
 let toastId = 1
 
-const LAST_VIEW_KEY = 'notedock:lastView'
+const LAST_VIEW_KEY = storageKey('lastView')
 
 function loadLastView(): { view: View; openFile: string | null } {
   try {
@@ -95,7 +96,7 @@ export function reportError(err: unknown, prefix = '') {
   logError(err)
 }
 
-const ERROR_LOG_KEY = 'notedock:errors'
+const ERROR_LOG_KEY = storageKey('errors')
 
 /** 直近20件のエラーを残す（設定画面で確認できる） */
 export function logError(err: unknown) {

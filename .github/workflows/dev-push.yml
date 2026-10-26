@@ -1,0 +1,17 @@
+name: Deploy dev
+
+# dev ブランチに push したら、main の公開ワークフローを起動して、本番と開発版をまとめて公開し直す
+on:
+  push:
+    branches: [dev]
+
+permissions:
+  actions: write
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - run: gh workflow run deploy.yml --repo "${{ github.repository }}" --ref main
+        env:
+          GH_TOKEN: ${{ github.token }}

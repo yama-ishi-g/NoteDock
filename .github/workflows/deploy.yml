@@ -1,5 +1,10 @@
 name: Deploy to GitHub Pages
 
+# 本番（main）と開発版（dev）を1つの GitHub Pages に置く
+#   main → https://yama-ishi-g.github.io/NoteDock/
+#   dev  → https://yama-ishi-g.github.io/NoteDock/dev/
+# GitHub Pages は main からしか公開できない設定のことがあるため、dev への push では
+# dev-push.yml がこのワークフローを main で起動する
 on:
   push:
     branches: [main]
@@ -14,27 +19,64 @@ concurrency:
   group: pages
   cancel-in-progress: true
 
-defaults:
-  run:
-    working-directory: notedock
-
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
+          path: main
+
+      - name: dev ブランチがあるか確認
+        id: dev
+        run: |
+          if git ls-remote --exit-code --heads "https://github.com/${{ github.repository }}.git" dev > /dev/null; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.dev.outputs.exists == 'true'
+        with:
+          ref: dev
+          path: dev
+
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: npm
-          cache-dependency-path: notedock/package-lock.json
-      - run: npm ci
-      - run: npm test
-      - run: npm run build
+
+      - name: 本番をビルド
+        working-directory: main/notedock
+        run: |
+          npm ci
+          npm test
+          npm run build
+
+      - name: 開発版をビルド
+        if: steps.dev.outputs.exists == 'true'
+        working-directory: dev/notedock
+        env:
+          NOTEDOCK_CHANNEL: dev
+        run: |
+          npm ci
+          npm test
+          npm run build
+
+      - name: まとめる
+        run: |
+          mkdir site
+          cp -r main/notedock/dist/. site/
+          if [ -d dev/notedock/dist ]; then
+            mkdir site/dev
+            cp -r dev/notedock/dist/. site/dev/
+          fi
+
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: notedock/dist
+          path: site
 
   deploy:
     needs: build

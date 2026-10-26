@@ -24,8 +24,9 @@ import { reportError, useAppStore } from '../state/appStore'
 import { dialogs } from '../state/dialogs'
 import { basename, dirname, validateName } from '../storage/paths'
 import type { ProjectMeta } from '../formats/project'
+import { storageKey } from '../lib/channel'
 
-const SIDEBAR_KEY = 'notedock:sidebar'
+const SIDEBAR_KEY = storageKey('sidebar')
 
 function loadSidebar(): { width: number; visible: boolean } {
   const portrait = window.matchMedia('(orientation: portrait)').matches
@@ -47,7 +48,7 @@ function useProjectLock(projectId: string) {
     let release: () => void = () => {}
     const held = new Promise<void>((r) => (release = r))
     let active = true
-    locks.request(`notedock-project-${projectId}`, { ifAvailable: true }, async (lock) => {
+    locks.request(storageKey(`project-${projectId}`), { ifAvailable: true }, async (lock) => {
       if (!active) return
       setReadOnly(!lock)
       if (lock) await held

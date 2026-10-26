@@ -591,3 +591,13 @@ button {
   #print-root .markdown-body { max-width: none; }
   html, body { height: auto; background: #fff; }
 }
+
+/* 開発版の帯 */
+.dev-band {
+  flex-shrink: 0;
+  padding: 4px 12px;
+  background: #d85a30;
+  color: #fff;
+  font-size: 13px;
+  text-align: center;
+}
