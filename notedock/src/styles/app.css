@@ -522,3 +522,72 @@ button {
   user-select: none;
   -webkit-touch-callout: none;
 }
+
+/* 混在ノート */
+.note-scroll.mixed { background: var(--bg); }
+.note-block { position: relative; }
+.note-block-body { position: relative; }
+.block-menu-btn {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 4;
+  background: var(--surface-2);
+  box-shadow: 0 0 0 1px var(--border);
+  opacity: 0.6;
+}
+.note-block:hover .block-menu-btn, .block-menu-btn:focus { opacity: 1; }
+.block-gap {
+  position: relative;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+.block-gap-line { position: absolute; left: 16px; right: 16px; top: 50%; border-top: 1px dashed transparent; }
+.block-gap-plus { position: relative; color: var(--text-muted); opacity: 0; background: var(--bg); border-radius: 50%; }
+.block-gap:hover .block-gap-line { border-top-color: var(--border); }
+.block-gap:hover .block-gap-plus { opacity: 1; }
+.note-block:first-child .block-gap { height: 10px; }
+.text-block { padding: 6px 48px 6px 20px; min-height: 40px; cursor: text; }
+.text-block .markdown-body { max-width: none; }
+.text-block .markdown-body > :first-child { margin-top: 0; }
+.text-block .markdown-body > :last-child { margin-bottom: 0; }
+.text-block-placeholder { color: var(--text-muted); margin: 0; }
+.text-block.editing { background: var(--surface); }
+.text-block-input {
+  display: block;
+  width: 100%;
+  border: none;
+  outline: none;
+  resize: none;
+  overflow: hidden;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 16px;
+  line-height: 1.75;
+  padding: 0;
+  min-height: 1.75em;
+}
+.text-block-input.mono { font-family: var(--mono); font-size: 15px; }
+.image-block { position: relative; background: #fff; }
+.image-block img { position: absolute; inset: 0; width: 100%; height: 100%; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.note-end { padding: 16px 16px 50vh; }
+.note-add-bar { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+.note-end-hint { text-align: center; margin-top: 10px; }
+
+/* 印刷（混在ノートの PDF 書き出し） */
+#print-root { display: none; }
+@media print {
+  body.printing #root { display: none; }
+  body.printing #print-root { display: block; padding: 0; color: #000; background: #fff; }
+  #print-root .print-title { font-size: 20px; margin: 0 0 12px; }
+  #print-root img { display: block; max-width: 100%; margin: 12px 0; break-inside: avoid; }
+  #print-root .markdown-body { max-width: none; }
+  html, body { height: auto; background: #fff; }
+}

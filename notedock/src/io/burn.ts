@@ -20,10 +20,8 @@ function hexToRgb(hex: string): [number, number, number] {
   return [parseInt(m[1], 16) / 255, parseInt(m[2], 16) / 255, parseInt(m[3], 16) / 255]
 }
 
-/** 画像に書き込みを合成する。元が JPEG なら JPEG、それ以外は PNG */
-export async function burnImage(projectId: string, path: string, naming: ExportNaming): Promise<File> {
-  const file = await readEntry(projectId, path)
-  const sidecar = await loadSidecar(projectId, path, 'image-px')
+/** 画像に線を合成した画像（JPEG または PNG）を作る */
+export async function composeImage(file: Blob, strokes: Stroke[], jpeg: boolean): Promise<Blob> {
   const bmp = await createImageBitmap(file)
   const canvas = document.createElement('canvas')
   canvas.width = bmp.width
@@ -31,18 +29,26 @@ export async function burnImage(projectId: string, path: string, naming: ExportN
   const ctx = canvas.getContext('2d')!
   ctx.drawImage(bmp, 0, 0)
   bmp.close()
-  for (const s of sidecar.pages['0']?.strokes ?? []) {
+  for (const s of strokes) {
     ctx.globalAlpha = s.opacity
     ctx.fillStyle = s.color
     ctx.fill(strokePath(s))
   }
   ctx.globalAlpha = 1
-  const jpeg = ['jpg', 'jpeg'].includes(extname(path))
   const blob = await new Promise<Blob>((resolve, reject) =>
     canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('画像を作れませんでした'))), jpeg ? 'image/jpeg' : 'image/png', jpeg ? 0.92 : undefined),
   )
   canvas.width = 0
   canvas.height = 0
+  return blob
+}
+
+/** 画像に書き込みを合成する。元が JPEG なら JPEG、それ以外は PNG */
+export async function burnImage(projectId: string, path: string, naming: ExportNaming): Promise<File> {
+  const file = await readEntry(projectId, path)
+  const sidecar = await loadSidecar(projectId, path, 'image-px')
+  const jpeg = ['jpg', 'jpeg'].includes(extname(path))
+  const blob = await composeImage(file, sidecar.pages['0']?.strokes ?? [], jpeg)
   return makeFile(blob, burnedName(path.slice(path.lastIndexOf('/') + 1), jpeg ? 'jpg' : 'png', naming))
 }
 

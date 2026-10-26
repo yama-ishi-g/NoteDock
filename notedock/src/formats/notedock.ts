@@ -11,6 +11,8 @@ export const INK_LOGICAL_WIDTH = 1000
 /** 新しい手書きブロックの高さ（論理座標） */
 export const DEFAULT_INK_HEIGHT = 1400
 export const GROW_STEP = 400
+/** 混在ノートに追加する手書きブロックの高さ（論理座標） */
+export const BLOCK_INK_HEIGHT = 500
 
 export type InkBackground = 'plain' | 'grid'
 
@@ -31,9 +33,22 @@ export type InkData = { formatVersion: 1; strokes: Stroke[] }
 
 export const inkPath = (blockId: string) => `ink/${blockId}.json`
 
-export function newInkBlock(background: InkBackground = 'grid'): InkBlock {
-  return { id: crypto.randomUUID(), type: 'ink', height: DEFAULT_INK_HEIGHT, background }
+export function newInkBlock(background: InkBackground = 'grid', height = DEFAULT_INK_HEIGHT): InkBlock {
+  return { id: crypto.randomUUID(), type: 'ink', height, background }
 }
+
+export function newTextBlock(markdown = ''): TextBlock {
+  return { id: crypto.randomUUID(), type: 'text', markdown }
+}
+
+/** 文章から始まる混在ノート（新規ノート） */
+export function newMixedNote(): NoteDoc {
+  const now = new Date().toISOString()
+  return { formatVersion: 1, id: crypto.randomUUID(), createdAt: now, updatedAt: now, blocks: [newTextBlock()] }
+}
+
+/** 画像ブロックの画像のパス（ノートのフォルダからの相対パス） */
+export const imagePath = (block: ImageBlock) => block.src
 
 /** 手書きブロック1つだけのノート（新規手書きノート） */
 export function newHandwritingNote(): NoteDoc {

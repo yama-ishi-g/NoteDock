@@ -3,7 +3,7 @@ import { projectFilesDir } from '../formats/project'
 import { setStorage } from '../storage'
 import { MemoryStorage } from '../storage/MemoryStorage'
 import { listChildren, renameEntry } from './files'
-import { cleanupNote, createHandwritingNote, importNoteZip, loadInk, loadNote, saveInk, zipNote } from './notes'
+import { cleanupNote, copyNoteFile, createHandwritingNote, createNote, importNoteZip, loadInk, loadNote, saveInk, saveNote, zipNote } from './notes'
 import { createProject } from './projects'
 
 let storage: MemoryStorage
@@ -62,5 +62,37 @@ describe('手書きノート', () => {
     expect(imported).toBe('図 (2).notedock')
     expect(await loadInk(pid, imported, id)).toHaveLength(2)
     await expect(importNoteZip(pid, '', 'x.notedock', new Uint8Array([1, 2, 3]))).rejects.toThrow()
+  })
+
+  it('混在ノートは文章ブロック1つから始まる', async () => {
+    const path = await createNote(pid, '', '会議', 'mixed')
+    const note = await loadNote(pid, path)
+    expect(note.blocks).toHaveLength(1)
+    expect(note.blocks[0]).toMatchObject({ type: 'text', markdown: '' })
+  })
+
+  it('使われていない画像と、その書き込みを掃除する', async () => {
+    const path = await createNote(pid, '', '会議', 'mixed')
+    const base = `${projectFilesDir(pid)}/${path}`
+    await storage.writeFile(`${base}/images/a.jpg`, 'A')
+    await storage.writeFile(`${base}/images/a.jpg.ink.json`, '{}')
+    await storage.writeFile(`${base}/images/b.jpg`, 'B')
+    await storage.writeFile(`${base}/images/b.jpg.ink.json`, '{}')
+    const note = await loadNote(pid, path)
+    const withImage = { ...note, blocks: [...note.blocks, { id: 'a', type: 'image' as const, src: 'images/a.jpg', width: 10, height: 10 }] }
+    await saveNote(pid, path, withImage)
+    await cleanupNote(pid, path, withImage)
+    expect(await storage.exists(`${base}/images/a.jpg`)).toBe(true)
+    expect(await storage.exists(`${base}/images/a.jpg.ink.json`)).toBe(true)
+    expect(await storage.exists(`${base}/images/b.jpg`)).toBe(false)
+    expect(await storage.exists(`${base}/images/b.jpg.ink.json`)).toBe(false)
+  })
+
+  it('ノートの中のファイルを複製する', async () => {
+    const path = await createNote(pid, '', '会議', 'mixed')
+    const base = `${projectFilesDir(pid)}/${path}`
+    await storage.writeFile(`${base}/images/a.jpg`, 'A')
+    await copyNoteFile(pid, path, 'images/a.jpg', 'images/c.jpg')
+    expect(await storage.readText(`${base}/images/c.jpg`)).toBe('A')
   })
 })

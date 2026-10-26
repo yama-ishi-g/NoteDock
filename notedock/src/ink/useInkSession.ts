@@ -112,5 +112,5 @@ export function useInkSession() {
 
   const activeHistory = history[activeId ?? Object.keys(history)[0] ?? ''] ?? { canUndo: false, canRedo: false }
 
-  return { tools, changeTools, onEngine, onHistory, markActive, undo, redo, cancelTouch, penActive, activeHistory, holdMs: settings.lineSnapHoldMs }
+  return { tools, changeTools, onEngine, onHistory, markActive, activeId, engines, undo, redo, cancelTouch, penActive, activeHistory, holdMs: settings.lineSnapHoldMs }
 }

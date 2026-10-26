@@ -1,5 +1,5 @@
 import {
-  ArrowLeft, Camera, Copy, FileText, FileType2, FolderInput, FolderPlus, NotebookPen, Pencil, Plus, Settings, Share, Trash2, Upload, PanelLeft,
+  ArrowLeft, Camera, Copy, FileText, FileType2, FolderInput, FolderPlus, NotebookPen, NotebookText, Pencil, Plus, Settings, Share, Trash2, Upload, PanelLeft,
 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Banner, PopupMenu, SaveIndicator, type MenuState } from '../components/common'
@@ -10,7 +10,8 @@ import { burnImage, burnPdf, type ExportNaming } from '../io/burn'
 import { hasStrokes } from '../formats/inkSidecar'
 import { loadSidecar } from '../services/annotations'
 import NoteEditor from '../editors/NoteEditor'
-import { createHandwritingNote, withNoteExt, zipNote } from '../services/notes'
+import { createNote, withNoteExt, zipNote } from '../services/notes'
+import { exportNoteMarkdown, preparePrint } from '../io/exportNote'
 import { activeEditor } from '../editors/activeEditor'
 import TextEditor, { type MdMode } from '../editors/TextEditor'
 import { importFiles, IMPORT_ACCEPT } from '../io/importFiles'
@@ -218,12 +219,18 @@ export default function ProjectView({ projectId }: { projectId: string }) {
     }
   }
 
-  const newHandwriting = async (parent: string) => {
+  const newNote = async (parent: string, kind: 'mixed' | 'handwriting') => {
     if (guard()) return
-    const name = await dialogs.prompt({ title: '新しい手書きノート', label: 'ノートの名前', initial: '手書きノート', okLabel: '作成', validate: (v) => validateName(withNoteExt(v)) })
+    const name = await dialogs.prompt({
+      title: kind === 'mixed' ? '新しいノート' : '新しい手書きノート',
+      label: 'ノートの名前',
+      initial: kind === 'mixed' ? 'ノート' : '手書きノート',
+      okLabel: '作成',
+      validate: (v) => validateName(withNoteExt(v)),
+    })
     if (!name) return
     try {
-      const path = await createHandwritingNote(projectId, parent, name)
+      const path = await createNote(projectId, parent, name, kind)
       if (parent && !expanded.has(parent)) {
         const next = new Set(expanded).add(parent)
         setExpanded(next)
@@ -308,6 +315,28 @@ export default function ProjectView({ projectId }: { projectId: string }) {
   const exportEntry = async (node: TreeNode) => {
     try {
       if (touchesOpenFile(node.path)) await activeEditor.flush()
+      // ノートは書き出し方を選んでもらう
+      let noteFormat: 'notedock' | 'markdown' | 'pdf' = 'notedock'
+      if (node.fileType === 'note') {
+        const choice = await dialogs.choose({
+          title: 'ノートの書き出し方',
+          options: [
+            { value: 'notedock' as const, label: '.notedock ファイル（NoteDockで開ける）' },
+            { value: 'markdown' as const, label: 'Markdown＋画像（ZIP）' },
+            { value: 'pdf' as const, label: 'PDF（印刷画面から保存）' },
+          ],
+        })
+        if (!choice) return
+        noteFormat = choice
+        if (choice === 'pdf') {
+          const job = await preparePrint(projectId, node.path)
+          // 印刷画面はタップの直後でないと開けないため、もう一度タップしてもらう
+          const ok = await dialogs.confirm({ title: '印刷の準備ができました', message: 'iPadでは、印刷画面の共有ボタンから「PDFとして保存」や「"ファイル"に保存」を選べます。', okLabel: '印刷画面を開く' })
+          if (ok) job.print()
+          else job.cancel()
+          return
+        }
+      }
       // PDF・画像に書き込みがあれば、焼き込むかどうかを選んでもらう
       let burn: ExportNaming | null = null
       if (node.fileType === 'pdf' || node.fileType === 'image') {
@@ -332,7 +361,9 @@ export default function ProjectView({ projectId }: { projectId: string }) {
           ? await burnPdf(projectId, node.path, burn)
           : await burnImage(projectId, node.path, burn)
         : node.fileType === 'note'
-          ? makeFile(await zipNote(projectId, node.path), node.name)
+          ? noteFormat === 'markdown'
+            ? await exportNoteMarkdown(projectId, node.path)
+            : makeFile(await zipNote(projectId, node.path), node.name)
           : node.kind === 'dir'
             ? makeFile(await zipFolder(projectId, node.path), `${node.name}_${dateStamp()}.zip`)
             : makeFile(await readEntry(projectId, node.path), node.name)
@@ -380,7 +411,8 @@ export default function ProjectView({ projectId }: { projectId: string }) {
     { label: '新しいフォルダ', icon: <FolderPlus size={16} />, onSelect: () => newFolder(dir) },
     { label: '新しいテキスト（.txt）', icon: <FileText size={16} />, onSelect: () => newFile(dir, 'txt') },
     { label: '新しいMarkdown（.md）', icon: <FileType2 size={16} />, onSelect: () => newFile(dir, 'md') },
-    { label: '新しい手書きノート', icon: <NotebookPen size={16} />, onSelect: () => newHandwriting(dir) },
+    { label: '新しいノート（文章・手書き・画像）', icon: <NotebookText size={16} />, onSelect: () => newNote(dir, 'mixed') },
+    { label: '新しい手書きノート', icon: <NotebookPen size={16} />, onSelect: () => newNote(dir, 'handwriting') },
     'separator' as const,
     { label: 'ファイルを取り込む', icon: <Upload size={16} />, onSelect: () => startImport(dir, false) },
     { label: 'カメラで撮る', icon: <Camera size={16} />, onSelect: () => startImport(dir, true) },

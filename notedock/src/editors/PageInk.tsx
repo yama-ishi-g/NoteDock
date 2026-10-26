@@ -21,10 +21,12 @@ type Props = {
   onEngine: (key: string, engine: InkEngine | null) => void
   onChange: (key: string, strokes: Stroke[]) => void
   onHistory: (key: string, canUndo: boolean, canRedo: boolean) => void
+  /** true のとき、描かない指の操作で scroller を縦にスクロールする（ノートの中の画像） */
+  touchPan?: boolean
 }
 
 /** PDF のページや画像の上に重ねる手書きの層。指のスクロール・ピンチは表示側（ZoomViewport）が行う */
-function PageInk({ pageKey, width, height, logicalWidth, getStrokes, tool, penColor, finger, holdMs, readOnly, scroller, onEngine, onChange, onHistory }: Props) {
+function PageInk({ pageKey, width, height, logicalWidth, getStrokes, tool, penColor, finger, holdMs, readOnly, scroller, onEngine, onChange, onHistory, touchPan = false }: Props) {
   const hostRef = useRef<HTMLDivElement>(null)
   const engineRef = useRef<InkEngine | null>(null)
   const [selection, setSelection] = useState<Selection | null>(null)
@@ -44,7 +46,7 @@ function PageInk({ pageKey, width, height, logicalWidth, getStrokes, tool, penCo
       onChange: (s) => live.current.onChange(pageKey, s),
       onSelection: setSelection,
       onHistory: (u, r) => live.current.onHistory(pageKey, u, r),
-      touchPan: false,
+      touchPan,
     })
     engine.setStrokes(getStrokes())
     engineRef.current = engine

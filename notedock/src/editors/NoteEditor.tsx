@@ -1,59 +1,50 @@
+import { ArrowDown, ArrowUp, Camera, Copy, ImagePlus, MoreVertical, PenLine, Plus, Trash2, Type } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { GROW_STEP, INK_LOGICAL_WIDTH, type InkBackground, type NoteDoc } from '../formats/notedock'
-import type { InkEngine } from '../ink/InkEngine'
-import InkToolbar, { type ToolState } from '../ink/InkToolbar'
-import type { Stroke } from '../ink/model'
-import { cleanupNote, loadInk, loadNote, saveInk, saveNote } from '../services/notes'
+import { PopupMenu, type MenuState } from '../components/common'
+import type { InkSidecar } from '../formats/inkSidecar'
+import {
+  BLOCK_INK_HEIGHT, GROW_STEP, INK_LOGICAL_WIDTH, newInkBlock, newTextBlock,
+  type Block, type ImageBlock, type InkBackground, type NoteDoc,
+} from '../formats/notedock'
+import InkToolbar from '../ink/InkToolbar'
+import { newStrokeId, type Stroke } from '../ink/model'
+import { useInkSession } from '../ink/useInkSession'
+import { saveSidecar } from '../services/annotations'
+import { addNoteImage, cleanupNote, copyNoteFile, loadInk, loadNote, noteFileExists, saveInk, saveNote } from '../services/notes'
 import { touchProject } from '../services/projects'
-import { logError, useAppStore } from '../state/appStore'
+import { logError, reportError, useAppStore } from '../state/appStore'
+import { dialogs } from '../state/dialogs'
 import { activeEditor } from './activeEditor'
 import InkBlockView from './InkBlockView'
+import ImageBlockView from './note/ImageBlockView'
+import TextBlockView from './note/TextBlockView'
 
 const SAVE_DELAY_MS = 1000
 
-function applyTools(e: InkEngine, t: ToolState) {
-  e.setTool(t.tool)
-  e.color = t.penColor
-  e.markerColor = t.markerColor
-  e.penLevel = t.penLevel
-  e.markerLevel = t.markerLevel
-  e.eraserLevel = t.eraserLevel
-}
-
-/** .notedock のエディタ。段階2では手書きブロックを扱う（テキスト・画像ブロックは段階4） */
+/**
+ * .notedock のエディタ（S04）。テキスト・手書き・画像のブロックを縦に並べる。
+ * 手書きブロック1つだけのノート（手書きノート）もこのエディタで開く
+ */
 export default function NoteEditor({ projectId, path }: { projectId: string; path: string }) {
-  const settings = useAppStore((s) => s.settings)
-  const updateSettings = useAppStore((s) => s.updateSettings)
   const readOnly = useAppStore((s) => s.readOnly)
   const setSaveState = useAppStore((s) => s.setSaveState)
+  const session = useInkSession()
   const [note, setNote] = useState<NoteDoc | null>(null)
   const [inks, setInks] = useState<Record<string, Stroke[]> | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [width, setWidth] = useState(0)
   const [scroller, setScroller] = useState<HTMLDivElement | null>(null)
-  const [history, setHistory] = useState<Record<string, { canUndo: boolean; canRedo: boolean }>>({})
-  const [tools, setTools] = useState<ToolState>(() => ({
-    tool: 'pen',
-    penColor: settings.tools.pen.color,
-    markerColor: settings.tools.marker.color,
-    penLevel: settings.tools.pen.sizeLevel,
-    markerLevel: settings.tools.marker.sizeLevel,
-    eraserLevel: settings.eraserLevel,
-    finger: settings.fingerDrawDefault,
-  }))
-  const engines = useRef(new Map<string, InkEngine>())
-  const settingsTimer = useRef<number | undefined>(undefined)
-  const toolsRef = useRef(tools)
-  useEffect(() => {
-    toolsRef.current = tools
-  }, [tools])
-  const activeBlock = useRef<string | null>(null)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [menu, setMenu] = useState<MenuState>(null)
   const pendingInk = useRef(new Map<string, Stroke[]>())
+  const pendingImageInk = useRef(new Map<string, { block: ImageBlock; sidecar: InkSidecar }>())
   const noteDirty = useRef(false)
   const latestNote = useRef<NoteDoc | null>(null)
   const timer = useRef<number | undefined>(undefined)
   const saveRef = useRef<() => Promise<void>>(async () => {})
-  const [activeBlockId, setActiveBlockId] = useState<string | null>(null)
+  const imageInput = useRef<HTMLInputElement>(null)
+  const cameraInput = useRef<HTMLInputElement>(null)
+  const insertAt = useRef(0)
 
   // 読み込み
   useEffect(() => {
@@ -77,22 +68,28 @@ export default function NoteEditor({ projectId, path }: { projectId: string; pat
     }
   }, [projectId, path])
 
+  // ---- 保存 ----
+
   const save = useCallback(async () => {
     window.clearTimeout(timer.current)
     const inkItems = [...pendingInk.current]
+    const imageItems = [...pendingImageInk.current.values()]
     const writeNote = noteDirty.current && latestNote.current
-    if (!inkItems.length && !writeNote) return
+    if (!inkItems.length && !imageItems.length && !writeNote) return
     pendingInk.current.clear()
+    pendingImageInk.current.clear()
     noteDirty.current = false
     setSaveState('saving')
     try {
       for (const [blockId, strokes] of inkItems) await saveInk(projectId, path, blockId, strokes)
+      for (const { block, sidecar } of imageItems) await saveSidecar(projectId, `${path}/${block.src}`, sidecar)
       if (writeNote) await saveNote(projectId, path, latestNote.current!)
-      setSaveState(pendingInk.current.size || noteDirty.current ? 'saving' : 'saved')
+      setSaveState(pendingInk.current.size || pendingImageInk.current.size || noteDirty.current ? 'saving' : 'saved')
       void touchProject(projectId)
     } catch (err) {
       // 保存できなかった分は戻して、少し待って再試行する
       for (const [id, s] of inkItems) if (!pendingInk.current.has(id)) pendingInk.current.set(id, s)
+      for (const item of imageItems) if (!pendingImageInk.current.has(item.block.id)) pendingImageInk.current.set(item.block.id, item)
       if (writeNote) noteDirty.current = true
       setSaveState('error')
       logError(err)
@@ -100,6 +97,7 @@ export default function NoteEditor({ projectId, path }: { projectId: string; pat
       timer.current = window.setTimeout(() => void saveRef.current(), 5000)
     }
   }, [projectId, path, setSaveState])
+
   useEffect(() => {
     saveRef.current = save
   }, [save])
@@ -120,9 +118,9 @@ export default function NoteEditor({ projectId, path }: { projectId: string; pat
       document.removeEventListener('visibilitychange', onHide)
       window.removeEventListener('pagehide', save)
       if (activeEditor.flush === save) activeEditor.flush = async () => {}
-      void save()
+      void save().then(() => latestNote.current && cleanupNote(projectId, path, latestNote.current))
     }
-  }, [save])
+  }, [save, projectId, path])
 
   // 表示幅に合わせる
   useEffect(() => {
@@ -145,22 +143,27 @@ export default function NoteEditor({ projectId, path }: { projectId: string; pat
     scheduleSave()
   }, [scheduleSave])
 
-  // 画面より短い手書きブロックは、画面の高さまで伸ばす
+  // 手書きブロックだけのノートは、画面の高さまで伸ばす
   useEffect(() => {
     if (!note || !width || !scroller) return
+    if (note.blocks.length !== 1 || note.blocks[0].type !== 'ink') return
     const minHeight = Math.ceil((scroller.clientHeight / width) * INK_LOGICAL_WIDTH)
-    const inkBlocks = note.blocks.filter((b) => b.type === 'ink')
-    if (inkBlocks.length === 1 && note.blocks.length === 1 && inkBlocks[0].height < minHeight) {
-      updateNote((n) => ({ ...n, blocks: n.blocks.map((b) => (b.type === 'ink' ? { ...b, height: minHeight } : b)) }))
-    }
+    if (note.blocks[0].height < minHeight) updateNote((n) => ({ ...n, blocks: n.blocks.map((b) => (b.type === 'ink' ? { ...b, height: minHeight } : b)) }))
   }, [note, width, scroller, updateNote])
 
-  const onChange = useCallback((blockId: string, strokes: Stroke[]) => {
-    activeBlock.current = blockId
-    setActiveBlockId(blockId)
+  // ---- ブロックの変更 ----
+
+  const onInkChange = useCallback((blockId: string, strokes: Stroke[]) => {
+    session.markActive(blockId)
     pendingInk.current.set(blockId, strokes)
     scheduleSave()
-  }, [scheduleSave])
+  }, [session, scheduleSave])
+
+  const onImageInkChange = useCallback((block: ImageBlock, sidecar: InkSidecar) => {
+    session.markActive(block.id)
+    pendingImageInk.current.set(block.id, { block, sidecar })
+    scheduleSave()
+  }, [session, scheduleSave])
 
   const onGrow = useCallback((blockId: string, y: number) => {
     updateNote((n) => ({
@@ -169,113 +172,258 @@ export default function NoteEditor({ projectId, path }: { projectId: string; pat
     }))
   }, [updateNote])
 
-  const onHistory = useCallback((blockId: string, canUndo: boolean, canRedo: boolean) => {
-    if (canUndo || canRedo) {
-      activeBlock.current = blockId
-      setActiveBlockId(blockId)
+  const insertBlock = (index: number, block: Block) => {
+    if (block.type === 'ink') {
+      setInks((m) => ({ ...m, [block.id]: [] }))
+      pendingInk.current.set(block.id, [])
     }
-    setHistory((h) => ({ ...h, [blockId]: { canUndo, canRedo } }))
-  }, [])
-
-  const onEngine = useCallback((blockId: string, engine: InkEngine | null) => {
-    if (engine) {
-      engines.current.set(blockId, engine)
-      applyTools(engine, toolsRef.current)
-    }
-    else engines.current.delete(blockId)
-  }, [])
-
-  const activeEngine = () => {
-    const id = activeBlock.current ?? [...engines.current.keys()][0]
-    return id ? engines.current.get(id) : undefined
-  }
-  const activeHistory = history[activeBlockId ?? Object.keys(history)[0] ?? ''] ?? { canUndo: false, canRedo: false }
-
-  const changeTools = (patch: Partial<ToolState>) => {
-    const next = { ...tools, ...patch }
-    // React の再描画を待たずに、手書き面へすぐ反映する
-    for (const e of engines.current.values()) applyTools(e, next)
-    setTools(next)
-    // 色と太さはツールごとに記憶する（指で描くは開いたファイルごと）。保存は少しまとめてから行う
-    if ('penColor' in patch || 'markerColor' in patch || 'penLevel' in patch || 'markerLevel' in patch || 'eraserLevel' in patch) {
-      window.clearTimeout(settingsTimer.current)
-      settingsTimer.current = window.setTimeout(() => {
-        void updateSettings({
-          tools: { pen: { color: next.penColor, sizeLevel: next.penLevel }, marker: { color: next.markerColor, sizeLevel: next.markerLevel } },
-          eraserLevel: next.eraserLevel,
-        })
-      }, 800)
-    }
+    updateNote((n) => {
+      const blocks = [...n.blocks]
+      blocks.splice(index, 0, block)
+      return { ...n, blocks }
+    })
+    if (block.type === 'text') setEditingId(block.id)
   }
 
-  const setBackground = (bg: InkBackground) => {
-    const id = activeBlockId ?? note?.blocks.find((b) => b.type === 'ink')?.id
-    updateNote((n) => ({ ...n, blocks: n.blocks.map((b) => (b.type === 'ink' && (b.id === id || n.blocks.length === 1) ? { ...b, background: bg } : b)) }))
+  const addInk = (index: number) => insertBlock(index, newInkBlock('grid', BLOCK_INK_HEIGHT))
+  const addText = (index: number) => insertBlock(index, newTextBlock())
+  const pickImage = (index: number, camera: boolean) => {
+    insertAt.current = index
+    ;(camera ? cameraInput : imageInput).current?.click()
   }
 
-  // キーボード（Windows で確認するとき）
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement
-      if (target.closest('input, textarea, [contenteditable]')) return
-      const mod = e.metaKey || e.ctrlKey
-      if (mod && e.key.toLowerCase() === 'z') {
-        e.preventDefault()
-        if (e.shiftKey) activeEngine()?.redo()
-        else activeEngine()?.undo()
-      } else if (mod && e.key.toLowerCase() === 'y') {
-        e.preventDefault()
-        activeEngine()?.redo()
-      } else if (e.key === 'Delete' || e.key === 'Backspace') {
-        activeEngine()?.deleteSelection()
-      } else if (e.key === 'Escape') {
-        activeEngine()?.clearSelection()
+  const onImages = async (files: FileList | null) => {
+    if (!files?.length) return
+    let index = insertAt.current
+    for (const f of [...files]) {
+      try {
+        insertBlock(index++, await addNoteImage(projectId, path, f))
+      } catch (err) {
+        reportError(err, `「${f.name}」を追加できませんでした: `)
       }
     }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [])
+  }
+
+  const moveBlock = (id: string, dir: -1 | 1) =>
+    updateNote((n) => {
+      const i = n.blocks.findIndex((b) => b.id === id)
+      const j = i + dir
+      if (i < 0 || j < 0 || j >= n.blocks.length) return n
+      const blocks = [...n.blocks]
+      ;[blocks[i], blocks[j]] = [blocks[j], blocks[i]]
+      return { ...n, blocks }
+    })
+
+  const duplicateBlock = async (block: Block) => {
+    const index = (latestNote.current?.blocks.findIndex((b) => b.id === block.id) ?? 0) + 1
+    try {
+      if (block.type === 'text') insertBlock(index, { ...block, id: crypto.randomUUID() })
+      else if (block.type === 'ink') {
+        const strokes = session.engines.current.get(block.id)?.getStrokes() ?? inks?.[block.id] ?? []
+        const copy = { ...block, id: crypto.randomUUID() }
+        const copied = strokes.map((s) => ({ ...s, id: newStrokeId() }))
+        setInks((m) => ({ ...m, [copy.id]: copied }))
+        updateNote((n) => {
+          const blocks = [...n.blocks]
+          blocks.splice(index, 0, copy)
+          return { ...n, blocks }
+        })
+        pendingInk.current.set(copy.id, copied)
+      } else {
+        await save()
+        const id = crypto.randomUUID()
+        const src = block.src.replace(/[^/]+(\.[^.]+)$/, `${id}$1`)
+        await copyNoteFile(projectId, path, block.src, src)
+        if (await noteFileExists(projectId, path, `${block.src}.ink.json`)) await copyNoteFile(projectId, path, `${block.src}.ink.json`, `${src}.ink.json`)
+        insertBlock(index, { ...block, id, src })
+      }
+    } catch (err) {
+      reportError(err, '複製できませんでした: ')
+    }
+  }
+
+  const deleteBlock = async (block: Block) => {
+    const empty = block.type === 'text' ? !block.markdown.trim() : block.type === 'ink' ? !(session.engines.current.get(block.id)?.getStrokes() ?? inks?.[block.id] ?? []).length : false
+    if (!empty) {
+      const ok = await dialogs.confirm({ title: 'ブロックを削除します', message: block.type === 'image' ? '画像と、その上の書き込みが削除されます。' : '元に戻せません。', okLabel: '削除', danger: true })
+      if (!ok) return
+    }
+    pendingInk.current.delete(block.id)
+    pendingImageInk.current.delete(block.id)
+    updateNote((n) => ({ ...n, blocks: n.blocks.filter((b) => b.id !== block.id) }))
+  }
+
+  const blockMenu = (block: Block, index: number, total: number, anchor: { x: number; y: number }) =>
+    setMenu({
+      anchor,
+      items: [
+        ...(index > 0 ? [{ label: '上へ', icon: <ArrowUp size={16} />, onSelect: () => moveBlock(block.id, -1) }] : []),
+        ...(index < total - 1 ? [{ label: '下へ', icon: <ArrowDown size={16} />, onSelect: () => moveBlock(block.id, 1) }] : []),
+        { label: '複製', icon: <Copy size={16} />, onSelect: () => void duplicateBlock(block) },
+        'separator' as const,
+        { label: '削除', icon: <Trash2 size={16} />, danger: true, onSelect: () => void deleteBlock(block) },
+      ],
+    })
+
+  const insertMenu = (index: number, anchor: { x: number; y: number }) =>
+    setMenu({
+      anchor,
+      items: [
+        { label: '文章', icon: <Type size={16} />, onSelect: () => addText(index) },
+        { label: '手書き', icon: <PenLine size={16} />, onSelect: () => addInk(index) },
+        { label: '画像', icon: <ImagePlus size={16} />, onSelect: () => pickImage(index, false) },
+        { label: 'カメラで撮る', icon: <Camera size={16} />, onSelect: () => pickImage(index, true) },
+      ],
+    })
+
+  const setBackground = (bg: InkBackground) => {
+    const blocks = latestNote.current?.blocks ?? []
+    const target = blocks.find((b) => b.id === session.activeId && b.type === 'ink') ?? blocks.find((b) => b.type === 'ink')
+    if (target) updateNote((n) => ({ ...n, blocks: n.blocks.map((b) => (b.id === target.id && b.type === 'ink' ? { ...b, background: bg } : b)) }))
+  }
+
+  const onEndEdit = (id: string) => {
+    setEditingId((cur) => (cur === id ? null : cur))
+    // 空の文章ブロックは、ほかのブロックがあれば消す
+    updateNote((n) => {
+      const b = n.blocks.find((x) => x.id === id)
+      if (b?.type === 'text' && !b.markdown.trim() && n.blocks.length > 1) return { ...n, blocks: n.blocks.filter((x) => x.id !== id) }
+      return n
+    })
+  }
 
   if (error) return <div className="editor-message">ノートを開けませんでした: {error}</div>
   if (!note || !inks) return <div className="editor-message">読み込み中…</div>
 
-  const firstInk = note.blocks.find((b) => b.type === 'ink')
+  const activeInk = note.blocks.find((b) => b.id === session.activeId && b.type === 'ink') ?? note.blocks.find((b) => b.type === 'ink')
+  const handwritingOnly = note.blocks.length === 1 && note.blocks[0].type === 'ink'
+
+  /** ブロックの間。ペンで触れると手書きブロックを作り、指やマウスで触れると追加のメニューを開く */
+  const gap = (index: number) =>
+    !handwritingOnly && !readOnly && (
+      <div
+        key={`gap-${index}`}
+        className="block-gap"
+        onPointerDown={(e) => {
+          if (e.pointerType === 'pen') {
+            e.preventDefault()
+            addInk(index)
+          }
+        }}
+        onClick={(e) => insertMenu(index, { x: e.clientX, y: e.clientY })}
+        title="ここに追加"
+      >
+        <span className="block-gap-line" />
+        <Plus size={14} className="block-gap-plus" />
+      </div>
+    )
+
   return (
     <div className="note-editor">
       <InkToolbar
-        state={tools}
-        onChange={changeTools}
-        canUndo={activeHistory.canUndo}
-        canRedo={activeHistory.canRedo}
-        onUndo={() => activeEngine()?.undo()}
-        onRedo={() => activeEngine()?.redo()}
-        background={firstInk?.type === 'ink' ? firstInk.background : undefined}
-        onBackground={firstInk ? setBackground : undefined}
+        state={session.tools}
+        onChange={session.changeTools}
+        canUndo={session.activeHistory.canUndo}
+        canRedo={session.activeHistory.canRedo}
+        onUndo={session.undo}
+        onRedo={session.redo}
+        background={activeInk?.type === 'ink' ? activeInk.background : undefined}
+        onBackground={activeInk ? setBackground : undefined}
       />
-      <div ref={setScroller} className="note-scroll">
-        {width > 0 && note.blocks.map((b) =>
-          b.type === 'ink' ? (
-            <InkBlockView
-              key={b.id}
-              block={b}
-              strokes={inks[b.id] ?? []}
-              width={width}
-              tool={tools.tool}
-              penColor={tools.penColor}
-              finger={tools.finger}
-              holdMs={settings.lineSnapHoldMs}
-              readOnly={readOnly}
-              scroller={scroller}
-              onEngine={onEngine}
-              onChange={onChange}
-              onHistory={onHistory}
-              onGrow={onGrow}
-            />
-          ) : (
-            <div key={b.id} className="block-placeholder">テキスト・画像のブロックは、今後のバージョンで対応します</div>
-          ),
+      <div ref={setScroller} className={`note-scroll ${handwritingOnly ? '' : 'mixed'}`}>
+        {width > 0 && (
+          <>
+            {note.blocks.map((b, i) => (
+              <div key={b.id} className={`note-block note-block-${b.type}`}>
+                {gap(i)}
+                <div className="note-block-body">
+                  {b.type === 'ink' && (
+                    <InkBlockView
+                      block={b}
+                      strokes={inks[b.id] ?? []}
+                      width={width}
+                      tool={session.tools.tool}
+                      penColor={session.tools.penColor}
+                      finger={session.tools.finger}
+                      holdMs={session.holdMs}
+                      readOnly={readOnly}
+                      scroller={scroller}
+                      onEngine={session.onEngine}
+                      onChange={onInkChange}
+                      onHistory={session.onHistory}
+                      onGrow={onGrow}
+                    />
+                  )}
+                  {b.type === 'text' && (
+                    <TextBlockView
+                      projectId={projectId}
+                      notePath={path}
+                      block={b}
+                      editing={editingId === b.id}
+                      readOnly={readOnly}
+                      onStartEdit={setEditingId}
+                      onChange={(id, markdown) => updateNote((n) => ({ ...n, blocks: n.blocks.map((x) => (x.id === id && x.type === 'text' ? { ...x, markdown } : x)) }))}
+                      onEndEdit={onEndEdit}
+                    />
+                  )}
+                  {b.type === 'image' && (
+                    <ImageBlockView
+                      projectId={projectId}
+                      notePath={path}
+                      block={b}
+                      width={width}
+                      tool={session.tools.tool}
+                      penColor={session.tools.penColor}
+                      finger={session.tools.finger}
+                      holdMs={session.holdMs}
+                      readOnly={readOnly}
+                      scroller={scroller}
+                      onEngine={session.onEngine}
+                      onHistory={session.onHistory}
+                      onInkChange={onImageInkChange}
+                    />
+                  )}
+                  {!handwritingOnly && !readOnly && (
+                    <button
+                      className="icon-btn small block-menu-btn"
+                      aria-label="ブロックのメニュー"
+                      onClick={(e) => {
+                        const r = e.currentTarget.getBoundingClientRect()
+                        blockMenu(b, i, note.blocks.length, { x: r.left - 160, y: r.bottom + 4 })
+                      }}
+                    >
+                      <MoreVertical size={16} />
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+            {!handwritingOnly && !readOnly && (
+              <div
+                className="note-end"
+                onPointerDown={(e) => {
+                  // ノートの下の余白をペンでなぞると、手書きブロックを追加する
+                  if (e.pointerType === 'pen' && e.target === e.currentTarget) {
+                    e.preventDefault()
+                    addInk(note.blocks.length)
+                  }
+                }}
+              >
+                <div className="note-add-bar">
+                  <button className="btn small" onClick={() => addText(note.blocks.length)}><Type size={16} /> 文章</button>
+                  <button className="btn small" onClick={() => addInk(note.blocks.length)}><PenLine size={16} /> 手書き</button>
+                  <button className="btn small" onClick={() => pickImage(note.blocks.length, false)}><ImagePlus size={16} /> 画像</button>
+                  <button className="btn small" onClick={() => pickImage(note.blocks.length, true)}><Camera size={16} /> カメラ</button>
+                </div>
+                <p className="muted small note-end-hint">ブロックの間や、この下の余白をPencilでなぞると手書きを追加できます</p>
+              </div>
+            )}
+          </>
         )}
       </div>
+      <input ref={imageInput} type="file" accept="image/*,.heic,.heif" multiple hidden onChange={(e) => { void onImages(e.target.files); e.target.value = '' }} />
+      <input ref={cameraInput} type="file" accept="image/*" capture="environment" hidden onChange={(e) => { void onImages(e.target.files); e.target.value = '' }} />
+      {menu && <PopupMenu anchor={menu.anchor} items={menu.items} onClose={() => setMenu(null)} />}
     </div>
   )
 }

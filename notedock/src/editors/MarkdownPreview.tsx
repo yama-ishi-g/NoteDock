@@ -1,17 +1,13 @@
-import DOMPurify from 'dompurify'
-import MarkdownIt from 'markdown-it'
 import { useEffect, useMemo, useRef } from 'react'
+import { renderMarkdown } from '../lib/markdown'
 import { readEntry } from '../services/files'
 import { dirname, joinPath, normalizePath } from '../storage/paths'
-
-// HTMLタグは無効にし、整形結果も DOMPurify で無害化する
-const md = new MarkdownIt({ html: false, linkify: true, breaks: true })
 
 const isExternal = (url: string) => /^[a-z][a-z0-9+.-]*:/i.test(url) || url.startsWith('//')
 
 export default function MarkdownPreview({ projectId, path, text }: { projectId: string; path: string; text: string }) {
   const ref = useRef<HTMLDivElement>(null)
-  const html = useMemo(() => DOMPurify.sanitize(md.render(text)), [text])
+  const html = useMemo(() => renderMarkdown(text), [text])
 
   useEffect(() => {
     const root = ref.current!
