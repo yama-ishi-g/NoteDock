@@ -25,6 +25,7 @@ export default function ScrollSection() {
       holdMs: () => 600,
       fingerDraw: () => false,
       touchMode: () => modeRef.current,
+      panInertia: true,
       onPan: (_dx, dy) => {
         if (scrollRef.current) scrollRef.current.scrollTop -= dy
       },
@@ -37,7 +38,7 @@ export default function ScrollSection() {
   useEffect(() => {
     modeRef.current = mode
     padRef.current?.applyTouchAction()
-    setResult('0-8 方式', mode === 'manual' ? 'A: touch-action none＋自前スクロール' : 'B: touch-action pan-y（ブラウザ標準）')
+    setResult('0-8 方式', mode === 'manual' ? 'A: touch-action none＋自前スクロール（弱い慣性）' : 'B: touch-action pan-y（ブラウザ標準）')
   }, [mode])
   useEffect(() => {
     if (stats) setResult(`0-8 ${mode} pointercancel`, `${stats.cancels} 回（ペンの線が途切れた回数の目安）`)
@@ -47,12 +48,12 @@ export default function ScrollSection() {
     <section id="lab-scroll">
       <h2>0-8 手書き枠の中の指スクロール</h2>
       <div className="row">
-        <button className={mode === 'manual' ? 'on' : ''} onClick={() => setMode('manual')}>方式A：自前スクロール</button>
+        <button className={mode === 'manual' ? 'on' : ''} onClick={() => setMode('manual')}>方式A：自前スクロール（弱い慣性）</button>
         <button className={mode === 'native' ? 'on' : ''} onClick={() => setMode('native')}>方式B：ブラウザ標準</button>
         <button onClick={() => padRef.current?.clear()}>全消去</button>
       </div>
       <p className="hint">
-        方式A: 枠内の指の動きをプログラムでスクロールに変換（慣性なし）。方式B: ブラウザ任せ（慣性あり。ただしPencilでもスクロールしてしまう可能性）。両方試して比べてください。
+        方式A: 枠内の指の動きをプログラムでスクロールに変換（指を弾くと少しだけ流れる）。方式B: ブラウザ任せ（慣性あり。ただしPencilでもスクロールしてしまう可能性）。両方試して比べてください。
       </p>
       <div ref={scrollRef} style={{ height: 420, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 8, padding: '0 12px' }}>
         {filler(1, 6)}

@@ -32,6 +32,8 @@ export type InkPadOptions = {
   /** 'manual': 指の移動を onPan で通知する / 'native': 指はブラウザに任せる */
   touchMode: () => 'manual' | 'native'
   onPan?: (dx: number, dy: number) => void
+  /** 指を離した後、少しだけ慣性で流す（onPan を呼び続ける） */
+  panInertia?: boolean
   onStats?: (s: InkStats) => void
   onSnap?: () => void
 }
@@ -42,6 +44,10 @@ const MIN_LINE_LENGTH = 20
 const MAX_HISTORY = 100
 const ERASER_RADIUS: Record<EraserSize, number> = { s: 6, m: 12, l: 24 }
 const DENSIFY_STEP = 2
+// 慣性スクロール: 1フレーム（16ms）ごとの減速率と、止める速さ・上限（px/ms）
+const INERTIA_FRICTION = 0.9
+const INERTIA_MIN_SPEED = 0.03
+const INERTIA_MAX_SPEED = 3
 
 const strokeSize = (s: Stroke) => (s.tool === 'marker' ? 18 : 4)
 
@@ -140,6 +146,8 @@ export class InkPad {
   private lastPenTime = -Infinity
   private panPointer = -1
   private panLast = { x: 0, y: 0 }
+  private panSamples: { t: number; dx: number; dy: number }[] = []
+  private inertiaRaf = 0
   private raf = 0
   private dpr = 1
   private resizeObserver: ResizeObserver
@@ -180,6 +188,7 @@ export class InkPad {
 
   destroy() {
     cancelAnimationFrame(this.raf)
+    this.stopInertia()
     this.resizeObserver.disconnect()
     this.container.removeEventListener('pointerdown', this.onDown)
     this.container.removeEventListener('pointermove', this.onMove)
@@ -262,6 +271,7 @@ export class InkPad {
 
   private onDown = (e: PointerEvent) => {
     this.stats.pointerType = e.pointerType
+    this.stopInertia()
     if (e.pointerType === 'pen') {
       this.lastPenTime = performance.now()
       // ペンが触れたら、指で描いている途中の線は取り消す（手のひら対策）
@@ -292,14 +302,20 @@ export class InkPad {
       this.container.setPointerCapture(e.pointerId)
       this.panPointer = e.pointerId
       this.panLast = { x: e.clientX, y: e.clientY }
+      this.panSamples = []
     }
   }
 
   private onMove = (e: PointerEvent) => {
     if (e.pointerType === 'pen') this.lastPenTime = performance.now()
     if (e.pointerId === this.panPointer) {
-      this.opts.onPan?.(e.clientX - this.panLast.x, e.clientY - this.panLast.y)
+      const dx = e.clientX - this.panLast.x
+      const dy = e.clientY - this.panLast.y
+      this.opts.onPan?.(dx, dy)
       this.panLast = { x: e.clientX, y: e.clientY }
+      const now = performance.now()
+      this.panSamples.push({ t: now, dx, dy })
+      this.panSamples = this.panSamples.filter((p) => now - p.t < 100)
       return
     }
     if (e.pointerId === this.erasePointer) {
@@ -335,6 +351,7 @@ export class InkPad {
   private onUp = (e: PointerEvent) => {
     if (e.pointerId === this.panPointer) {
       this.panPointer = -1
+      if (this.opts.panInertia) this.startInertia()
       return
     }
     if (e.pointerId === this.erasePointer) {
@@ -397,6 +414,37 @@ export class InkPad {
     this.currentType = ''
     this.eraserPos = null
     this.ctx(this.live).clearRect(0, 0, this.live.width, this.live.height)
+  }
+
+  // 指を離す直前100msの速さから、少しずつ減速しながら流す
+  private startInertia() {
+    const now = performance.now()
+    const recent = this.panSamples.filter((p) => now - p.t < 100)
+    if (recent.length < 2) return
+    const dt = Math.max(16, now - recent[0].t)
+    const clamp = (v: number) => Math.max(-INERTIA_MAX_SPEED, Math.min(INERTIA_MAX_SPEED, v))
+    let vx = clamp(recent.reduce((s, p) => s + p.dx, 0) / dt)
+    let vy = clamp(recent.reduce((s, p) => s + p.dy, 0) / dt)
+    let last = now
+    const step = (t: number) => {
+      const elapsed = t - last
+      last = t
+      const decay = Math.pow(INERTIA_FRICTION, elapsed / 16)
+      vx *= decay
+      vy *= decay
+      if (Math.hypot(vx, vy) < INERTIA_MIN_SPEED) {
+        this.inertiaRaf = 0
+        return
+      }
+      this.opts.onPan?.(vx * elapsed, vy * elapsed)
+      this.inertiaRaf = requestAnimationFrame(step)
+    }
+    this.inertiaRaf = requestAnimationFrame(step)
+  }
+
+  private stopInertia() {
+    cancelAnimationFrame(this.inertiaRaf)
+    this.inertiaRaf = 0
   }
 
   private onCancel = (e: PointerEvent) => {
