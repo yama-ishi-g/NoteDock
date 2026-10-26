@@ -60,3 +60,9 @@
   .lab .ok { color: #97c459; }
   .lab .ng { color: #f09595; }
 }
+/* 手書きの検証欄の周り（ツールバー・計測値）は、Pencilでなぞっても文字選択されないようにする */
+#lab-ink, #lab-scroll {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}

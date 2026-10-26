@@ -107,12 +107,17 @@ export class InkPad {
       Object.assign(c.style, { position: 'absolute', inset: '0', width: '100%', height: '100%' })
       container.appendChild(c)
     }
-    container.style.position = 'relative'
+    Object.assign(container.style, { position: 'relative', userSelect: 'none', webkitUserSelect: 'none', webkitTouchCallout: 'none' })
     this.applyTouchAction()
     container.addEventListener('pointerdown', this.onDown)
     container.addEventListener('pointermove', this.onMove)
     container.addEventListener('pointerup', this.onUp)
     container.addEventListener('pointercancel', this.onCancel)
+    // iPadOSは Pencil の動きをテキスト選択・Scribble として解釈し、近くの文字にフォーカスを移すことがある。
+    // touch イベントを止めてOS標準のジェスチャーを無効にする（Pointer Events は止まらない）
+    container.addEventListener('touchstart', this.onTouch, { passive: false })
+    container.addEventListener('touchmove', this.onTouch, { passive: false })
+    document.addEventListener('selectstart', this.onSelectStart)
     this.resizeObserver = new ResizeObserver(() => this.resize())
     this.resizeObserver.observe(container)
     this.resize()
@@ -125,6 +130,9 @@ export class InkPad {
     this.container.removeEventListener('pointermove', this.onMove)
     this.container.removeEventListener('pointerup', this.onUp)
     this.container.removeEventListener('pointercancel', this.onCancel)
+    this.container.removeEventListener('touchstart', this.onTouch)
+    this.container.removeEventListener('touchmove', this.onTouch)
+    document.removeEventListener('selectstart', this.onSelectStart)
     this.committed.remove()
     this.live.remove()
   }
@@ -246,6 +254,16 @@ export class InkPad {
     this.current = null
     this.currentType = ''
     this.ctx(this.live).clearRect(0, 0, this.live.width, this.live.height)
+  }
+
+  private onTouch = (e: TouchEvent) => {
+    const stylus = [...e.changedTouches].some((t) => (t as Touch & { touchType?: string }).touchType === 'stylus')
+    // 指は「ブラウザ標準」方式のときだけOSに任せる（スクロールさせるため）
+    if (stylus || this.opts.touchMode() === 'manual') e.preventDefault()
+  }
+
+  private onSelectStart = (e: Event) => {
+    if (this.current) e.preventDefault()
   }
 
   private onCancel = (e: PointerEvent) => {
