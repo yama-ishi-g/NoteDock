@@ -76,7 +76,7 @@ export async function countFiles(id: string): Promise<number> {
   const walk = async (dir: string): Promise<number> => {
     let n = 0
     for (const e of await storage.listDir(dir)) {
-      if (e.kind === 'dir') n += isNoteExt(extname(e.name)) ? 1 : await walk(`${dir}/${e.name}`)
+      if (e.kind === 'dir') n += isNoteExt(extname(e.name)) ? 1 : e.name.endsWith('.ink.assets') ? 0 : await walk(`${dir}/${e.name}`)
       else if (!isSidecar(e.name) && !e.name.endsWith(TMP_SUFFIX)) n++
     }
     return n

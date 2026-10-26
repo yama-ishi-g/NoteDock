@@ -1,7 +1,7 @@
 // 手書きのデータ（内部仕様書 5.2）
 
 export type InkTool = 'pen' | 'marker'
-export type Tool = InkTool | 'eraser' | 'lasso'
+export type Tool = InkTool | 'eraser' | 'lasso' | 'select' | 'text'
 export type SizeLevel = 0 | 1 | 2
 
 export type Stroke = {

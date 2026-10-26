@@ -1,9 +1,11 @@
-import { memo, useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import type { InkSidecar } from '../../formats/inkSidecar'
 import ResizeHandle from '../../components/ResizeHandle'
 import { MIN_IMAGE_RATIO, type ImageBlock } from '../../formats/notedock'
 import type { InkEngine } from '../../ink/InkEngine'
-import type { Stroke, Tool } from '../../ink/model'
+import { sidecarAssets } from '../../ink/assets'
+import type { InkItem } from '../../ink/items'
+import type { SizeLevel, Stroke, Tool } from '../../ink/model'
 import { loadSidecar } from '../../services/annotations'
 import { readNoteFile } from '../../services/notes'
 import PageInk from '../PageInk'
@@ -24,10 +26,12 @@ type Props = {
   onInkChange: (block: ImageBlock, sidecar: InkSidecar) => void
   /** 右下のつまみで表示幅（ノートの幅に対する割合）を変える */
   onResize?: (blockId: string, ratio: number) => void
+  textStyle: () => { level: SizeLevel; color: string }
 }
 
 /** 画像のブロック。画像の上に書き込める（座標は画像のピクセル。付属ファイルは images/xxx.jpg.ink.json） */
-function ImageBlockView({ projectId, notePath, block, width: noteWidth, tool, penColor, finger, holdMs, readOnly, scroller, onEngine, onHistory, onInkChange, onResize }: Props) {
+function ImageBlockView({ projectId, notePath, block, width: noteWidth, tool, penColor, finger, holdMs, readOnly, scroller, onEngine, onHistory, onInkChange, onResize, textStyle }: Props) {
+  const assets = useMemo(() => sidecarAssets(projectId, `${notePath}/${block.src}`), [projectId, notePath, block.src])
   const ratio = Math.min(1, Math.max(MIN_IMAGE_RATIO, block.displayRatio ?? 1))
   const width = Math.round(noteWidth * ratio)
   const startWidth = useRef(width)
@@ -71,6 +75,9 @@ function ImageBlockView({ projectId, notePath, block, width: noteWidth, tool, pe
             height={height}
             logicalWidth={block.width}
             getStrokes={() => sidecar.current?.pages['0']?.strokes ?? []}
+            getItems={() => sidecar.current?.pages['0']?.items ?? []}
+            assets={assets}
+            textStyle={textStyle}
             tool={tool}
             penColor={penColor}
             finger={finger}
@@ -80,9 +87,9 @@ function ImageBlockView({ projectId, notePath, block, width: noteWidth, tool, pe
             onEngine={onEngine}
             onHistory={onHistory}
             touchPan
-            onChange={(_key: string, strokes: Stroke[]) => {
+            onChange={(_key: string, strokes: Stroke[], items: InkItem[]) => {
               if (!sidecar.current) return
-              sidecar.current = { ...sidecar.current, pages: { '0': { width: block.width, height: block.height, strokes } } }
+              sidecar.current = { ...sidecar.current, pages: { '0': { width: block.width, height: block.height, strokes, items } } }
               onInkChange(block, sidecar.current)
             }}
           />

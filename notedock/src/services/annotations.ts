@@ -22,8 +22,8 @@ export async function loadSidecar(projectId: string, path: string, coordSpace: I
 export async function saveSidecar(projectId: string, path: string, sidecar: InkSidecar): Promise<void> {
   const pages: InkSidecar['pages'] = {}
   for (const [k, p] of Object.entries(sidecar.pages)) {
-    // 線のないページは保存しない
-    if (p.strokes.length) pages[k] = { ...p, strokes: p.strokes.map(roundStroke) }
+    // 線も置いたものもないページは保存しない
+    if (p.strokes.length || p.items?.length) pages[k] = { ...p, strokes: p.strokes.map(roundStroke) }
   }
   const storage = getStorage()
   if (!Object.keys(pages).length) {

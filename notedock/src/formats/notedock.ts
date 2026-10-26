@@ -1,3 +1,4 @@
+import { migrateItems, type InkItem } from '../ink/items'
 import type { Stroke } from '../ink/model'
 
 // ノートの形式（内部仕様書 5.4）。アプリ内ではフォルダとして持つ
@@ -48,7 +49,7 @@ export type NoteDoc = {
   blocks: Block[]
 }
 
-export type InkData = { formatVersion: 1; strokes: Stroke[] }
+export type InkData = { formatVersion: 1; strokes: Stroke[]; items?: InkItem[] }
 
 export const inkPath = (blockId: string) => `ink/${blockId}.json`
 
@@ -91,5 +92,5 @@ export function migrateNote(raw: unknown): NoteDoc {
 export function migrateInk(raw: unknown): InkData {
   const d = raw as Partial<InkData>
   const strokes = Array.isArray(d?.strokes) ? d.strokes.filter((s) => s && typeof s.id === 'string' && Array.isArray(s.points)) : []
-  return { formatVersion: 1, strokes }
+  return { formatVersion: 1, strokes, items: migrateItems(d?.items) }
 }

@@ -1,5 +1,7 @@
 import { eraserPath, eraseStrokes, lassoSelect, shouldSnapLine, toLine, translateStroke } from './geometry'
 import { InkHistory } from './history'
+import type { AssetResolver } from './assets'
+import { fontSizeFor, newImageItem, newTextItem, type InkItem } from './items'
 import {
   ERASER_RADII, MARKER_OPACITY, MARKER_SIZES, newStrokeId, PEN_SIZES, rectsIntersect, unionBounds,
   type InkTool, type Point, type Rect, type SizeLevel, type Stroke, type Tool,
@@ -12,6 +14,12 @@ import { cachedBounds, cachedPath, drawStroke, strokePath } from './render'
 
 export type Selection = { ids: string[]; bounds: Rect }
 
+/** 線と置いたもの（画像・テキストボックス）。元に戻すの単位 */
+export type InkContent = { strokes: Stroke[]; items: InkItem[] }
+
+/** 置いたもののどこに触れたか（React 側の表示から判定する） */
+export type ItemHit = { id: string; handle: boolean }
+
 export type InkEngineOptions = {
   /** 論理座標1あたりの画面上の px */
   scale: () => number
@@ -21,7 +29,21 @@ export type InkEngineOptions = {
   fingerDraw: () => boolean
   readOnly: () => boolean
   /** 確定した変更（保存する） */
-  onChange: (strokes: Stroke[]) => void
+  onChange: (strokes: Stroke[], items: InkItem[]) => void
+  /** 置いたものの表示を更新する（移動中の途中経過も含む） */
+  onItems?: (items: InkItem[], selectedId: string | null) => void
+  /** 画面上の点が、置いたもの（とその大きさを変えるつまみ）に当たるか */
+  hitTestItem?: (clientX: number, clientY: number) => ItemHit | null
+  /** テキストボックスの編集を始める */
+  onEditText?: (id: string) => void
+  /** 手書き面の操作でテキストボックスの編集を終えた */
+  onEndEdit?: () => void
+  /** 座標系の横幅（文字の大きさ・画像を置く大きさの基準） */
+  logicalWidth?: () => number
+  /** 新しいテキストボックスの文字の大きさと色 */
+  textStyle?: () => { level: SizeLevel; color: string }
+  /** 置く画像の保存場所 */
+  assets?: AssetResolver
   onSelection: (sel: Selection | null) => void
   onHistory: (canUndo: boolean, canRedo: boolean) => void
   /** 下端の近くまで描いたとき（論理座標の y） */
@@ -54,7 +76,9 @@ const stylusIn = (list: TouchList) => [...list].find((t) => (t as Touch & { touc
 
 type Gesture =
   | { kind: 'draw'; pointerId: number; type: string; stroke: Stroke; start: number; anchor: Point; lastMoveAt: number; flashUntil: number }
-  | { kind: 'erase'; pointerId: number; type: string; before: Stroke[]; last: Point | null; changed: boolean }
+  | { kind: 'erase'; pointerId: number; type: string; before: InkContent; last: Point | null; changed: boolean }
+  | { kind: 'itemMove'; pointerId: number; type: string; id: string; start: Point; orig: { x: number; y: number }; moved: boolean; wasSelected: boolean; before: InkContent }
+  | { kind: 'itemResize'; pointerId: number; type: string; id: string; start: Point; orig: { w: number; h: number }; before: InkContent }
   | { kind: 'lasso'; pointerId: number; type: string; polygon: Point[] }
   | { kind: 'move'; pointerId: number; type: string; start: Point; dx: number; dy: number }
   | { kind: 'pan'; pointerId: number; last: { x: number; y: number }; samples: { t: number; dx: number; dy: number }[] }
@@ -72,7 +96,12 @@ export class InkEngine {
   private committed: HTMLCanvasElement
   private live: HTMLCanvasElement
   private strokes: Stroke[] = []
-  private history = new InkHistory()
+  private items: InkItem[] = []
+  private selectedItem: string | null = null
+  /** テキストボックスを編集し始めたときの内容（編集が終わったら履歴に記録する） */
+  private editBefore: InkContent | null = null
+  private editingId: string | null = null
+  private history = new InkHistory<InkContent>()
   private gesture: Gesture | null = null
   private selection: Selection | null = null
   private lastPenTime = -Infinity
@@ -132,11 +161,14 @@ export class InkEngine {
 
   // ---- 外から呼ぶ操作 ----
 
-  setStrokes(strokes: Stroke[]) {
+  setStrokes(strokes: Stroke[], items: InkItem[] = []) {
     this.strokes = strokes
+    this.items = items
+    this.selectedItem = null
     this.history.clear()
     this.setSelection(null)
     this.emitHistory()
+    this.emitItems()
     this.invalidate()
   }
 
@@ -144,31 +176,37 @@ export class InkEngine {
     return this.strokes
   }
 
+  getItems() {
+    return this.items
+  }
+
   setTool(tool: Tool) {
+    if (tool !== this.tool) this.finishTextEdit()
     if (tool !== 'lasso') this.setSelection(null)
+    if (tool !== 'select' && tool !== 'text') this.selectItem(null)
     this.tool = tool
     this.schedule()
   }
 
   undo() {
-    const prev = this.history.undo(this.strokes)
+    const prev = this.history.undo(this.content)
     if (prev) this.applyHistory(prev)
   }
 
   redo() {
-    const next = this.history.redo(this.strokes)
+    const next = this.history.redo(this.content)
     if (next) this.applyHistory(next)
   }
 
   clearAll() {
-    if (!this.strokes.length) return
-    this.commit([])
+    if (!this.strokes.length && !this.items.length) return
+    this.commit({ strokes: [], items: [] })
   }
 
   deleteSelection() {
     if (!this.selection) return
     const ids = new Set(this.selection.ids)
-    this.commit(this.strokes.filter((s) => !ids.has(s.id)))
+    this.commit({ strokes: this.strokes.filter((s) => !ids.has(s.id)) })
     this.setSelection(null)
   }
 
@@ -177,14 +215,111 @@ export class InkEngine {
     const ids = new Set(this.selection.ids)
     const offset = 20
     const copies = this.strokes.filter((s) => ids.has(s.id)).map((s) => ({ ...translateStroke(s, offset, offset), id: newStrokeId() }))
-    this.commit([...this.strokes, ...copies])
+    this.commit({ strokes: [...this.strokes, ...copies] })
     this.selectIds(copies.map((c) => c.id))
   }
 
   recolorSelection(color: string) {
     if (!this.selection) return
     const ids = new Set(this.selection.ids)
-    this.commit(this.strokes.map((s) => (ids.has(s.id) ? { ...s, color } : s)))
+    this.commit({ strokes: this.strokes.map((s) => (ids.has(s.id) ? { ...s, color } : s)) })
+  }
+
+  // ---- 置いたもの（画像・テキストボックス） ----
+
+  /** 画像を置く（見えている範囲の中央）。置いた画像を選ぶ */
+  addImage(src: string, width: number, height: number) {
+    const item = newImageItem(src, width, height, this.visibleRect(), this.logicalWidth)
+    this.commit({ items: [...this.items, item] })
+    this.selectItem(item.id)
+  }
+
+  selectItem(id: string | null) {
+    if (this.selectedItem === id) return
+    this.selectedItem = id
+    this.emitItems()
+  }
+
+  get selectedItemId() {
+    return this.selectedItem
+  }
+
+  /** 選んでいるものを変える（文字の大きさ・色など）。履歴に記録する */
+  updateItem(id: string, patch: Partial<InkItem>) {
+    this.commit({ items: this.items.map((i) => (i.id === id ? ({ ...i, ...patch } as InkItem) : i)) })
+  }
+
+  /** 置く画像の保存場所 */
+  get assets() {
+    return this.opts.assets
+  }
+
+  /** 選んでいるテキストボックスの文字の大きさ・色を変える */
+  styleSelectedText(style: { level?: SizeLevel; color?: string }) {
+    const item = this.items.find((i) => i.id === this.selectedItem)
+    if (item?.type !== 'text') return
+    const level = style.level ?? item.level
+    this.updateItem(item.id, { level, fontSize: fontSizeFor(level, this.logicalWidth), color: style.color ?? item.color })
+  }
+
+  /** 画面に見えている面積（px²）。画像を置く手書き面を選ぶのに使う */
+  get visibleArea() {
+    return this.view.height * this.view.width
+  }
+
+  deleteSelectedItem() {
+    const id = this.selectedItem
+    if (!id) return
+    this.selectedItem = null
+    this.commit({ items: this.items.filter((i) => i.id !== id) })
+  }
+
+  duplicateSelectedItem() {
+    const item = this.items.find((i) => i.id === this.selectedItem)
+    if (!item) return
+    const offset = this.logicalWidth * 0.02
+    const copy = { ...item, id: crypto.randomUUID(), x: item.x + offset, y: item.y + offset }
+    this.commit({ items: [...this.items, copy] })
+    this.selectItem(copy.id)
+  }
+
+  /** テキストボックスの編集を始める（呼ぶのは表示側） */
+  beginTextEdit(id?: string) {
+    this.editBefore ??= this.content
+    if (id) this.editingId = id
+  }
+
+  /** 編集中のテキストボックスがあれば編集を終える（ツールの切り替え・ペンで触れたとき） */
+  private finishTextEdit() {
+    const id = this.editingId
+    if (!id) return
+    this.endTextEdit(id)
+    this.opts.onEndEdit?.()
+  }
+
+  /** 入力中の文字を反映する（履歴には記録しない） */
+  setItemText(id: string, text: string) {
+    this.items = this.items.map((i) => (i.id === id && i.type === 'text' ? { ...i, text } : i))
+    this.emitItems()
+  }
+
+  /** 編集を終える。空なら消す。変わっていれば1回の操作として履歴に記録する */
+  endTextEdit(id: string) {
+    const before = this.editBefore
+    this.editBefore = null
+    this.editingId = null
+    const item = this.items.find((i) => i.id === id)
+    if (item?.type === 'text' && !item.text.trim()) {
+      this.items = this.items.filter((i) => i.id !== id)
+      if (this.selectedItem === id) this.selectedItem = null
+    }
+    const changed = !before || before.items.length !== this.items.length || before.items.some((b, k) => b !== this.items[k])
+    if (before && changed) {
+      this.history.record(before)
+      this.emitHistory()
+      this.opts.onChange(this.strokes, this.items)
+    }
+    this.emitItems()
   }
 
   clearSelection() {
@@ -222,20 +357,37 @@ export class InkEngine {
     this.boundScroller = s
   }
 
-  private applyHistory(strokes: Stroke[]) {
-    this.strokes = strokes
-    this.setSelection(null)
-    this.emitHistory()
-    this.invalidate()
-    this.opts.onChange(strokes)
+  private get content(): InkContent {
+    return { strokes: this.strokes, items: this.items }
   }
 
-  private commit(next: Stroke[]) {
-    this.history.record(this.strokes)
-    this.strokes = next
+  private get logicalWidth() {
+    return this.opts.logicalWidth?.() ?? 1000
+  }
+
+  private emitItems() {
+    this.opts.onItems?.(this.items, this.selectedItem)
+  }
+
+  private applyHistory(c: InkContent) {
+    this.strokes = c.strokes
+    this.items = c.items
+    if (this.selectedItem && !c.items.some((i) => i.id === this.selectedItem)) this.selectedItem = null
+    this.setSelection(null)
     this.emitHistory()
+    this.emitItems()
     this.invalidate()
-    this.opts.onChange(next)
+    this.opts.onChange(c.strokes, c.items)
+  }
+
+  private commit(next: Partial<InkContent>) {
+    this.history.record(this.content)
+    if (next.strokes) this.strokes = next.strokes
+    if (next.items) this.items = next.items
+    this.emitHistory()
+    if (next.items) this.emitItems()
+    this.invalidate()
+    this.opts.onChange(this.strokes, this.items)
   }
 
   private emitHistory() {
@@ -352,13 +504,18 @@ export class InkEngine {
       if (this.gesture?.kind === 'pan') this.gesture = null
     }
     if (this.gesture) return
+    // 指はスクロールに使うことがあるため、編集はペン・マウスで触れたときだけ終える（指で別の所に置くときは onItemDown で終える）
+    if (e.pointerType !== 'touch') this.finishTextEdit()
 
-    if (this.canDraw(e)) {
+    if ((this.tool === 'select' || this.tool === 'text') && this.onItemDown(e)) return
+    if (this.tool !== 'select' && this.tool !== 'text') this.selectItem(null)
+
+    if (this.canDraw(e) && this.tool !== 'select' && this.tool !== 'text') {
       this.capture(e.pointerId)
       e.preventDefault()
       const p = this.toLogical(e)
       if (this.tool === 'eraser') {
-        this.gesture = { kind: 'erase', pointerId: e.pointerId, type: e.pointerType, before: this.strokes, last: null, changed: false }
+        this.gesture = { kind: 'erase', pointerId: e.pointerId, type: e.pointerType, before: this.content, last: null, changed: false }
         this.eraseTo(p)
       } else if (this.tool === 'lasso') {
         const b = this.selection?.bounds
@@ -399,10 +556,72 @@ export class InkEngine {
     }
   }
 
+  /** 選択・文字のツールでの pointerdown。処理したら true */
+  private onItemDown(e: PointerEvent): boolean {
+    if (this.opts.readOnly()) return false
+    // 指は、ペンを使った直後（手のひら）でなければ使える
+    if (e.pointerType === 'touch' && performance.now() - this.lastPenTime < PALM_MS) return true
+    if (e.pointerType === 'mouse' && e.button !== 0) return false
+    const p = this.toLogical(e)
+    const hit = this.opts.hitTestItem?.(e.clientX, e.clientY) ?? null
+    const item = hit ? this.items.find((i) => i.id === hit.id) : undefined
+    if (this.tool === 'text' && (!item || item.type === 'text')) {
+      e.preventDefault()
+      this.finishTextEdit()
+      if (item) {
+        this.selectItem(item.id)
+        this.opts.onEditText?.(item.id)
+        return true
+      }
+      // 何もない所に触れたら、新しいテキストボックスを作って編集を始める
+      this.beginTextEdit()
+      const style = this.opts.textStyle?.() ?? { level: 1 as SizeLevel, color: this.color }
+      const t = newTextItem(p.x, p.y, this.logicalWidth, style.level, style.color)
+      this.items = [...this.items, t]
+      this.selectedItem = t.id
+      this.emitItems()
+      this.opts.onEditText?.(t.id)
+      return true
+    }
+    if (!item) {
+      this.selectItem(null)
+      // 指で何もない所に触れたら、スクロールに使う
+      return false
+    }
+    e.preventDefault()
+    this.capture(e.pointerId)
+    const wasSelected = this.selectedItem === item.id
+    this.selectItem(item.id)
+    if (hit?.handle && wasSelected) {
+      this.gesture = { kind: 'itemResize', pointerId: e.pointerId, type: e.pointerType, id: item.id, start: p, orig: { w: item.w, h: item.type === 'image' ? item.h : 0 }, before: this.content }
+    } else {
+      this.gesture = { kind: 'itemMove', pointerId: e.pointerId, type: e.pointerType, id: item.id, start: p, orig: { x: item.x, y: item.y }, moved: false, wasSelected, before: this.content }
+    }
+    return true
+  }
+
   private onMove = (e: PointerEvent) => {
     if (e.pointerType === 'pen') this.lastPenTime = performance.now()
     const g = this.gesture
     if (!g || g.pointerId !== e.pointerId) return
+    if (g.kind === 'itemMove' || g.kind === 'itemResize') {
+      const p = this.toLogical(e)
+      const dx = p.x - g.start.x
+      const dy = p.y - g.start.y
+      if (g.kind === 'itemMove') {
+        if (Math.hypot(dx, dy) * this.scale > 4) g.moved = true
+        if (g.moved) this.items = this.items.map((i) => (i.id === g.id ? { ...i, x: g.orig.x + dx, y: g.orig.y + dy } : i))
+      } else {
+        const min = 24 / this.scale
+        this.items = this.items.map((i) => {
+          if (i.id !== g.id) return i
+          const w = Math.max(min * 2, g.orig.w + dx)
+          return i.type === 'image' ? { ...i, w, h: (w * g.orig.h) / g.orig.w } : { ...i, w }
+        })
+      }
+      this.emitItems()
+      return
+    }
     const events = e.getCoalescedEvents?.() ?? []
     const list = events.length ? events : [e]
 
@@ -464,15 +683,32 @@ export class InkEngine {
         this.startInertia(g.samples)
         return
       case 'draw':
-        this.commit([...this.strokes, g.stroke])
+        this.commit({ strokes: [...this.strokes, g.stroke] })
         break
       case 'erase':
         if (g.changed) {
           this.history.record(g.before)
           this.emitHistory()
-          this.opts.onChange(this.strokes)
+          this.opts.onChange(this.strokes, this.items)
         }
         break
+      case 'itemMove': {
+        if (g.moved) {
+          this.history.record(g.before)
+          this.emitHistory()
+          this.opts.onChange(this.strokes, this.items)
+        } else {
+          // 選んでいるテキストボックスにもう一度触れたら、編集を始める
+          const item = this.items.find((i) => i.id === g.id)
+          if (g.wasSelected && item?.type === 'text') this.opts.onEditText?.(item.id)
+        }
+        return
+      }
+      case 'itemResize':
+        this.history.record(g.before)
+        this.emitHistory()
+        this.opts.onChange(this.strokes, this.items)
+        return
       case 'lasso': {
         const ids = lassoSelect(this.strokes, g.polygon)
         if (ids.length) this.selectIds(ids)
@@ -481,7 +717,7 @@ export class InkEngine {
       case 'move': {
         if (Math.hypot(g.dx, g.dy) * this.scale < 1 || !this.selection) break
         const ids = new Set(this.selection.ids)
-        this.commit(this.strokes.map((s) => (ids.has(s.id) ? translateStroke(s, g.dx, g.dy) : s)))
+        this.commit({ strokes: this.strokes.map((s) => (ids.has(s.id) ? translateStroke(s, g.dx, g.dy) : s)) })
         this.selectIds([...ids])
         break
       }
@@ -493,11 +729,11 @@ export class InkEngine {
     const g = this.gesture
     if (!g || g.pointerId !== e.pointerId) return
     this.gesture = null
-    // 消しゴムの途中で取り消されたら、消した分は残して履歴に記録する
-    if (g.kind === 'erase' && g.changed) {
+    // 消しゴム・移動の途中で取り消されたら、そこまでの分は残して履歴に記録する
+    if ((g.kind === 'erase' && g.changed) || (g.kind === 'itemMove' && g.moved) || g.kind === 'itemResize') {
       this.history.record(g.before)
       this.emitHistory()
-      this.opts.onChange(this.strokes)
+      this.opts.onChange(this.strokes, this.items)
     }
     this.invalidate()
   }

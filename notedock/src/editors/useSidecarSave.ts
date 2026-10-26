@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react'
 import type { InkSidecar } from '../formats/inkSidecar'
+import type { InkItem } from '../ink/items'
 import type { Stroke } from '../ink/model'
 import { saveSidecar } from '../services/annotations'
 import { touchProject } from '../services/projects'
@@ -52,9 +53,9 @@ export function useSidecarSave(projectId: string, path: string) {
   }, [save])
 
   /** ページの線が変わったとき */
-  const update = useCallback((pageIndex: string, page: { width: number; height: number }, strokes: Stroke[]) => {
+  const update = useCallback((pageIndex: string, page: { width: number; height: number }, strokes: Stroke[], items: InkItem[] = []) => {
     if (!sidecar.current) return
-    sidecar.current = { ...sidecar.current, pages: { ...sidecar.current.pages, [pageIndex]: { ...page, strokes } } }
+    sidecar.current = { ...sidecar.current, pages: { ...sidecar.current.pages, [pageIndex]: { ...page, strokes, items } } }
     dirty.current = true
     setSaveState('saving')
     window.clearTimeout(timer.current)
@@ -69,5 +70,8 @@ export function useSidecarSave(projectId: string, path: string) {
   /** ページの線（手書きの層を作るときに読む） */
   const pageStrokes = useCallback((pageIndex: string): Stroke[] => sidecar.current?.pages[pageIndex]?.strokes ?? [], [])
 
-  return { setLoaded, pageStrokes, update }
+  /** ページに置いたもの */
+  const pageItems = useCallback((pageIndex: string): InkItem[] => sidecar.current?.pages[pageIndex]?.items ?? [], [])
+
+  return { setLoaded, pageStrokes, pageItems, update }
 }

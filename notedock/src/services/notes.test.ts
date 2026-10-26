@@ -3,7 +3,7 @@ import { projectFilesDir } from '../formats/project'
 import { setStorage } from '../storage'
 import { MemoryStorage } from '../storage/MemoryStorage'
 import { listChildren, renameEntry } from './files'
-import { cleanupNote, copyNoteFile, createHandwritingNote, createNote, importNoteZip, loadInk, loadNote, saveInk, saveNote, withNoteExt, zipNote } from './notes'
+import { cleanupNote, copyNoteFile, createHandwritingNote, createNote, importNoteZip, loadInk, loadInkData, loadNote, saveInk, saveNote, withNoteExt, zipNote } from './notes'
 import { createProject } from './projects'
 
 let storage: MemoryStorage
@@ -98,6 +98,27 @@ describe('手書きノート', () => {
     expect(await storage.exists(`${base}/images/a.jpg.ink.json`)).toBe(true)
     expect(await storage.exists(`${base}/images/b.jpg`)).toBe(false)
     expect(await storage.exists(`${base}/images/b.jpg.ink.json`)).toBe(false)
+  })
+
+  it('手書きブロック・画像ブロックに置いた画像は掃除しない', async () => {
+    const path = await createNote(pid, '', '会議', 'mixed')
+    const base = `${projectFilesDir(pid)}/${path}`
+    await storage.writeFile(`${base}/images/a.jpg`, 'A')
+    await storage.writeFile(`${base}/images/a.jpg.ink.assets/x.png`, 'X')
+    await storage.writeFile(`${base}/images/b.jpg.ink.assets/y.png`, 'Y')
+    await storage.writeFile(`${base}/images/placed.png`, 'P')
+    const note = await loadNote(pid, path)
+    const next = {
+      ...note,
+      blocks: [...note.blocks, { id: 'ink1', type: 'ink' as const, height: 300, background: 'plain' as const }, { id: 'a', type: 'image' as const, src: 'images/a.jpg', width: 10, height: 10 }],
+    }
+    await saveNote(pid, path, next)
+    await saveInk(pid, path, 'ink1', [], [{ id: 'i', type: 'image', src: 'images/placed.png', x: 0, y: 0, w: 10, h: 10 }])
+    expect((await loadInkData(pid, path, 'ink1')).items).toHaveLength(1)
+    await cleanupNote(pid, path, next)
+    expect(await storage.exists(`${base}/images/placed.png`)).toBe(true)
+    expect(await storage.exists(`${base}/images/a.jpg.ink.assets/x.png`)).toBe(true)
+    expect(await storage.exists(`${base}/images/b.jpg.ink.assets`)).toBe(false)
   })
 
   it('ノートの中のファイルを複製する', async () => {

@@ -2,6 +2,8 @@ import { unzipSync, zipSync, type Zippable } from 'fflate'
 import { INK_NOTE_EXT, inkPath, isNoteExt, migrateInk, migrateNote, newHandwritingNote, newMixedNote, NOTE_EXT, NOTE_JSON, type ImageBlock, type InkData, type NoteDoc } from '../formats/notedock'
 import { prepareImage } from '../io/images'
 import { projectFilesDir } from '../formats/project'
+import { ASSETS_SUFFIX, assetsDirOf } from '../ink/assets'
+import type { InkItem } from '../ink/items'
 import { roundStroke, type Stroke } from '../ink/model'
 import { getStorage } from '../storage'
 import { extname, joinPath, TMP_SUFFIX, validateName } from '../storage/paths'
@@ -40,16 +42,21 @@ export async function saveNote(projectId: string, notePath: string, note: NoteDo
   await getStorage().writeJson(abs(projectId, notePath, NOTE_JSON), { ...note, updatedAt: new Date().toISOString() })
 }
 
-export async function loadInk(projectId: string, notePath: string, blockId: string): Promise<Stroke[]> {
+export async function loadInkData(projectId: string, notePath: string, blockId: string): Promise<{ strokes: Stroke[]; items: InkItem[] }> {
   try {
-    return migrateInk(await getStorage().readJson(abs(projectId, notePath, inkPath(blockId)))).strokes
+    const d = migrateInk(await getStorage().readJson(abs(projectId, notePath, inkPath(blockId))))
+    return { strokes: d.strokes, items: d.items ?? [] }
   } catch {
-    return []
+    return { strokes: [], items: [] }
   }
 }
 
-export async function saveInk(projectId: string, notePath: string, blockId: string, strokes: Stroke[]): Promise<void> {
-  const data: InkData = { formatVersion: 1, strokes: strokes.map(roundStroke) }
+export async function loadInk(projectId: string, notePath: string, blockId: string): Promise<Stroke[]> {
+  return (await loadInkData(projectId, notePath, blockId)).strokes
+}
+
+export async function saveInk(projectId: string, notePath: string, blockId: string, strokes: Stroke[], items: InkItem[] = []): Promise<void> {
+  const data: InkData = { formatVersion: 1, strokes: strokes.map(roundStroke), ...(items.length ? { items } : {}) }
   // 1本描くたびにノート全体を書き直さないよう、手書きブロックごとに別ファイルにする
   await getStorage().writeFile(abs(projectId, notePath, inkPath(blockId)), JSON.stringify(data))
 }
@@ -60,12 +67,19 @@ export async function cleanupNote(projectId: string, notePath: string, note: Not
   const usedInk = new Set(note.blocks.filter((b) => b.type === 'ink').map((b) => `${b.id}.json`))
   const usedImages = new Set(note.blocks.filter((b): b is ImageBlock => b.type === 'image').flatMap((b) => {
     const name = b.src.replace(/^images\//, '')
-    return [name, `${name}.ink.json`]
+    return [name, `${name}.ink.json`, assetsDirOf(name)]
   }))
+  // 手書きブロックに置いた画像も残す
+  for (const b of note.blocks) {
+    if (b.type !== 'ink') continue
+    for (const item of (await loadInkData(projectId, notePath, b.id)).items) if (item.type === 'image') usedImages.add(item.src.replace(/^images\//, ''))
+  }
   for (const [dir, used] of [['ink', usedInk], ['images', usedImages]] as const) {
     try {
       for (const e of await storage.listDir(abs(projectId, notePath, dir))) {
-        if (e.kind === 'file' && !used.has(e.name) && !e.name.endsWith(TMP_SUFFIX)) await storage.remove(abs(projectId, notePath, `${dir}/${e.name}`))
+        // 画像ブロックに置いた画像のフォルダ（images/xxx.jpg.ink.assets）も、画像ブロックが無くなれば消す
+        const stale = e.kind === 'file' ? !used.has(e.name) && !e.name.endsWith(TMP_SUFFIX) : e.name.endsWith(ASSETS_SUFFIX) && !used.has(e.name)
+        if (stale) await storage.remove(abs(projectId, notePath, `${dir}/${e.name}`))
       }
     } catch {
       // フォルダがない

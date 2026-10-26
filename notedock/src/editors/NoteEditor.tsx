@@ -1,5 +1,5 @@
 import { ArrowDown, ArrowUp, Camera, Copy, ImagePlus, MoreVertical, PenLine, Plus, Trash2, Type } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { PopupMenu, type MenuState } from '../components/common'
 import type { InkSidecar } from '../formats/inkSidecar'
 import {
@@ -10,7 +10,9 @@ import InkToolbar from '../ink/InkToolbar'
 import { newStrokeId, type Stroke } from '../ink/model'
 import { useInkSession } from '../ink/useInkSession'
 import { saveSidecar } from '../services/annotations'
-import { addNoteImage, cleanupNote, copyNoteFile, loadInk, loadNote, noteFileExists, saveInk, saveNote } from '../services/notes'
+import { addNoteImage, cleanupNote, copyNoteFile, loadInkData, loadNote, noteFileExists, saveInk, saveNote } from '../services/notes'
+import { assetsDirOf, noteAssets } from '../ink/assets'
+import type { InkItem } from '../ink/items'
 import { touchProject } from '../services/projects'
 import { logError, reportError, useAppStore } from '../state/appStore'
 import { dialogs } from '../state/dialogs'
@@ -21,6 +23,8 @@ import TextBlockView from './note/TextBlockView'
 
 const SAVE_DELAY_MS = 1000
 
+type InkContentData = { strokes: Stroke[]; items: InkItem[] }
+
 /**
  * .notedock のエディタ（S04）。テキスト・手書き・画像のブロックを縦に並べる。
  * 手書きブロック1つだけのノート（手書きノート）もこのエディタで開く
@@ -30,13 +34,16 @@ export default function NoteEditor({ projectId, path }: { projectId: string; pat
   const setSaveState = useAppStore((s) => s.setSaveState)
   const session = useInkSession()
   const [note, setNote] = useState<NoteDoc | null>(null)
-  const [inks, setInks] = useState<Record<string, Stroke[]> | null>(null)
+  /** 手書きブロックの線と置いたもの（読み込み時の内容。以後はエンジンが持つ） */
+  const [inks, setInks] = useState<Record<string, InkContentData> | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [width, setWidth] = useState(0)
   const [scroller, setScroller] = useState<HTMLDivElement | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [menu, setMenu] = useState<MenuState>(null)
-  const pendingInk = useRef(new Map<string, Stroke[]>())
+  const pendingInk = useRef(new Map<string, InkContentData>())
+  const inkImageInput = useRef<HTMLInputElement>(null)
+  const assets = useMemo(() => noteAssets(projectId, path), [projectId, path])
   const pendingImageInk = useRef(new Map<string, { block: ImageBlock; sidecar: InkSidecar }>())
   const noteDirty = useRef(false)
   const latestNote = useRef<NoteDoc | null>(null)
@@ -52,8 +59,8 @@ export default function NoteEditor({ projectId, path }: { projectId: string; pat
     ;(async () => {
       try {
         const n = await loadNote(projectId, path)
-        const loaded: Record<string, Stroke[]> = {}
-        for (const b of n.blocks) if (b.type === 'ink') loaded[b.id] = await loadInk(projectId, path, b.id)
+        const loaded: Record<string, InkContentData> = {}
+        for (const b of n.blocks) if (b.type === 'ink') loaded[b.id] = await loadInkData(projectId, path, b.id)
         if (cancelled) return
         latestNote.current = n
         setNote(n)
@@ -81,7 +88,7 @@ export default function NoteEditor({ projectId, path }: { projectId: string; pat
     noteDirty.current = false
     setSaveState('saving')
     try {
-      for (const [blockId, strokes] of inkItems) await saveInk(projectId, path, blockId, strokes)
+      for (const [blockId, c] of inkItems) await saveInk(projectId, path, blockId, c.strokes, c.items)
       for (const { block, sidecar } of imageItems) await saveSidecar(projectId, `${path}/${block.src}`, sidecar)
       if (writeNote) await saveNote(projectId, path, latestNote.current!)
       setSaveState(pendingInk.current.size || pendingImageInk.current.size || noteDirty.current ? 'saving' : 'saved')
@@ -153,9 +160,9 @@ export default function NoteEditor({ projectId, path }: { projectId: string; pat
 
   // ---- ブロックの変更 ----
 
-  const onInkChange = useCallback((blockId: string, strokes: Stroke[]) => {
+  const onInkChange = useCallback((blockId: string, strokes: Stroke[], items: InkItem[]) => {
     session.markActive(blockId)
-    pendingInk.current.set(blockId, strokes)
+    pendingInk.current.set(blockId, { strokes, items })
     scheduleSave()
   }, [session, scheduleSave])
 
@@ -182,8 +189,8 @@ export default function NoteEditor({ projectId, path }: { projectId: string; pat
 
   const insertBlock = (index: number, block: Block) => {
     if (block.type === 'ink') {
-      setInks((m) => ({ ...m, [block.id]: [] }))
-      pendingInk.current.set(block.id, [])
+      setInks((m) => ({ ...m, [block.id]: { strokes: [], items: [] } }))
+      pendingInk.current.set(block.id, { strokes: [], items: [] })
     }
     updateNote((n) => {
       const blocks = [...n.blocks]
@@ -227,9 +234,11 @@ export default function NoteEditor({ projectId, path }: { projectId: string; pat
     try {
       if (block.type === 'text') insertBlock(index, { ...block, id: crypto.randomUUID() })
       else if (block.type === 'ink') {
-        const strokes = session.engines.current.get(block.id)?.getStrokes() ?? inks?.[block.id] ?? []
+        const engine = session.engines.current.get(block.id)
+        const strokes = engine?.getStrokes() ?? inks?.[block.id]?.strokes ?? []
+        const items = engine?.getItems() ?? inks?.[block.id]?.items ?? []
         const copy = { ...block, id: crypto.randomUUID() }
-        const copied = strokes.map((s) => ({ ...s, id: newStrokeId() }))
+        const copied = { strokes: strokes.map((s) => ({ ...s, id: newStrokeId() })), items: items.map((i) => ({ ...i, id: crypto.randomUUID() })) }
         setInks((m) => ({ ...m, [copy.id]: copied }))
         updateNote((n) => {
           const blocks = [...n.blocks]
@@ -243,6 +252,7 @@ export default function NoteEditor({ projectId, path }: { projectId: string; pat
         const src = block.src.replace(/[^/]+(\.[^.]+)$/, `${id}$1`)
         await copyNoteFile(projectId, path, block.src, src)
         if (await noteFileExists(projectId, path, `${block.src}.ink.json`)) await copyNoteFile(projectId, path, `${block.src}.ink.json`, `${src}.ink.json`)
+        if (await noteFileExists(projectId, path, assetsDirOf(block.src))) await copyNoteFile(projectId, path, assetsDirOf(block.src), assetsDirOf(src))
         insertBlock(index, { ...block, id, src })
       }
     } catch (err) {
@@ -251,7 +261,12 @@ export default function NoteEditor({ projectId, path }: { projectId: string; pat
   }
 
   const deleteBlock = async (block: Block) => {
-    const empty = block.type === 'text' ? !block.markdown.trim() : block.type === 'ink' ? !(session.engines.current.get(block.id)?.getStrokes() ?? inks?.[block.id] ?? []).length : false
+    const engine = session.engines.current.get(block.id)
+    const empty = block.type === 'text'
+      ? !block.markdown.trim()
+      : block.type === 'ink'
+        ? !(engine?.getStrokes() ?? inks?.[block.id]?.strokes ?? []).length && !(engine?.getItems() ?? inks?.[block.id]?.items ?? []).length
+        : false
     if (!empty) {
       const ok = await dialogs.confirm({ title: 'ブロックを削除します', message: block.type === 'image' ? '画像と、その上の書き込みが削除されます。' : '元に戻せません。', okLabel: '削除', danger: true })
       if (!ok) return
@@ -337,6 +352,7 @@ export default function NoteEditor({ projectId, path }: { projectId: string; pat
         onRedo={session.redo}
         background={activeInk?.type === 'ink' ? activeInk.background : undefined}
         onBackground={activeInk ? setBackground : undefined}
+        onInsertImage={() => inkImageInput.current?.click()}
       />
       <div ref={setScroller} className={`note-scroll ${handwritingOnly ? '' : 'mixed'}`}>
         {width > 0 && (
@@ -348,7 +364,10 @@ export default function NoteEditor({ projectId, path }: { projectId: string; pat
                   {b.type === 'ink' && (
                     <InkBlockView
                       block={b}
-                      strokes={inks[b.id] ?? []}
+                      strokes={inks[b.id]?.strokes ?? []}
+                      items={inks[b.id]?.items ?? []}
+                      assets={assets}
+                      textStyle={session.textStyle}
                       width={width}
                       tool={session.tools.tool}
                       penColor={session.tools.penColor}
@@ -390,6 +409,7 @@ export default function NoteEditor({ projectId, path }: { projectId: string; pat
                       onEngine={session.onEngine}
                       onHistory={session.onHistory}
                       onInkChange={onImageInkChange}
+                      textStyle={session.textStyle}
                       onResize={resizeImage}
                     />
                   )}
@@ -431,6 +451,11 @@ export default function NoteEditor({ projectId, path }: { projectId: string; pat
           </>
         )}
       </div>
+      <input ref={inkImageInput} type="file" accept="image/*,.heic,.heif" hidden onChange={(e) => {
+        const f = e.target.files?.[0]
+        e.target.value = ''
+        if (f) session.insertImage(f).catch((err) => reportError(err, '画像を置けませんでした: '))
+      }} />
       <input ref={imageInput} type="file" accept="image/*,.heic,.heif" multiple hidden onChange={(e) => { void onImages(e.target.files); e.target.value = '' }} />
       <input ref={cameraInput} type="file" accept="image/*" capture="environment" hidden onChange={(e) => { void onImages(e.target.files); e.target.value = '' }} />
       {menu && <PopupMenu anchor={menu.anchor} items={menu.items} onClose={() => setMenu(null)} />}

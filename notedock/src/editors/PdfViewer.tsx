@@ -4,10 +4,12 @@ import ZoomViewport from '../components/ZoomViewport'
 import InkToolbar from '../ink/InkToolbar'
 import type { Stroke } from '../ink/model'
 import { useInkSession } from '../ink/useInkSession'
+import { sidecarAssets } from '../ink/assets'
+import type { InkItem } from '../ink/items'
 import { openPdf } from '../io/pdfjs'
 import { loadSidecar } from '../services/annotations'
 import { readEntry } from '../services/files'
-import { useAppStore } from '../state/appStore'
+import { reportError, useAppStore } from '../state/appStore'
 import { dialogs } from '../state/dialogs'
 import PageInk from './PageInk'
 import { useSidecarSave } from './useSidecarSave'
@@ -113,7 +115,9 @@ const PdfPage = memo(function PdfPage({ doc, index, size, zoom, top, left, scrol
 export default function PdfViewer({ projectId, path }: { projectId: string; path: string }) {
   const appReadOnly = useAppStore((s) => s.readOnly)
   const session = useInkSession()
-  const { setLoaded, pageStrokes, update } = useSidecarSave(projectId, path)
+  const { setLoaded, pageStrokes, pageItems, update } = useSidecarSave(projectId, path)
+  const assets = useMemo(() => sidecarAssets(projectId, path), [projectId, path])
+  const imageInput = useRef<HTMLInputElement>(null)
   const [doc, setDoc] = useState<PDFDocumentProxy | null>(null)
   const [sizes, setSizes] = useState<PageSize[]>([])
   const [encrypted, setEncrypted] = useState(false)
@@ -219,9 +223,9 @@ export default function PdfViewer({ projectId, path }: { projectId: string; path
     if (v && scroller) scroller.scrollTo({ top: pageTop(+v - 1) - PAD })
   }
 
-  const onChange = useCallback((key: string, strokes: Stroke[]) => {
+  const onChange = useCallback((key: string, strokes: Stroke[], items: InkItem[]) => {
     const i = Number(key)
-    update(key, sizes[i], strokes)
+    update(key, sizes[i], strokes, items)
   }, [sizes, update])
 
   if (error) return <div className="editor-message">PDFを開けませんでした: {error}</div>
@@ -232,7 +236,7 @@ export default function PdfViewer({ projectId, path }: { projectId: string; path
     <div className="viewer">
       <div className="viewer-bar">
         {!encrypted && (
-          <InkToolbar state={session.tools} onChange={session.changeTools} canUndo={session.activeHistory.canUndo} canRedo={session.activeHistory.canRedo} onUndo={session.undo} onRedo={session.redo} />
+          <InkToolbar state={session.tools} onChange={session.changeTools} canUndo={session.activeHistory.canUndo} canRedo={session.activeHistory.canRedo} onUndo={session.undo} onRedo={session.redo} onInsertImage={() => imageInput.current?.click()} />
         )}
         {encrypted && <span className="muted small viewer-note">パスワード付きのPDFには書き込めません</span>}
         <div className="zoom-controls">
@@ -270,6 +274,9 @@ export default function PdfViewer({ projectId, path }: { projectId: string; path
                 height={s.height * zoom}
                 logicalWidth={s.width}
                 getStrokes={() => pageStrokes(String(i))}
+                getItems={() => pageItems(String(i))}
+                assets={assets}
+                textStyle={session.textStyle}
                 tool={session.tools.tool}
                 penColor={session.tools.penColor}
                 finger={session.tools.finger}
@@ -284,6 +291,11 @@ export default function PdfViewer({ projectId, path }: { projectId: string; path
           />
         ))}
       </ZoomViewport>
+      <input ref={imageInput} type="file" accept="image/*,.heic,.heif" hidden onChange={(e) => {
+        const f = e.target.files?.[0]
+        e.target.value = ''
+        if (f) session.insertImage(f).catch((err) => reportError(err, '画像を置けませんでした: '))
+      }} />
     </div>
   )
 }

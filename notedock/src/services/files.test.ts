@@ -84,4 +84,20 @@ describe('files', () => {
     expect(await storage.exists(p('dest/x (3).jpg'))).toBe(false)
     expect(await storage.exists(p('dest/x (3).jpg.ink.json'))).toBe(false)
   })
+
+  it('書き込みに置いた画像のフォルダは隠し、元のファイルと一緒に動かす', async () => {
+    await createFolder(pid, '', 'dest')
+    await createFile(pid, '', 'a.pdf', 'pdf')
+    await storage.writeFile(p('a.pdf.ink.assets/x.png'), 'X')
+    // 元のファイルが無いものは見せる
+    await storage.writeFile(p('lost.pdf.ink.assets/y.png'), 'Y')
+    expect((await listChildren(pid, '')).map((e) => e.name).sort()).toEqual(['a.pdf', 'dest', 'lost.pdf.ink.assets'])
+    await renameEntry(pid, 'a.pdf', 'b.pdf')
+    expect(await storage.readText(p('b.pdf.ink.assets/x.png'))).toBe('X')
+    expect(await moveEntry(pid, 'b.pdf', 'dest')).toBe('dest/b.pdf')
+    expect(await duplicateEntry(pid, 'dest/b.pdf')).toBe('dest/b (2).pdf')
+    expect(await storage.readText(p('dest/b (2).pdf.ink.assets/x.png'))).toBe('X')
+    await deleteEntry(pid, 'dest/b.pdf')
+    expect(await storage.exists(p('dest/b.pdf.ink.assets'))).toBe(false)
+  })
 })

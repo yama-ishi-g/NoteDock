@@ -1,12 +1,14 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ZoomViewport from '../components/ZoomViewport'
 import type { InkSidecar } from '../formats/inkSidecar'
 import InkToolbar from '../ink/InkToolbar'
 import type { Stroke } from '../ink/model'
 import { useInkSession } from '../ink/useInkSession'
+import { sidecarAssets } from '../ink/assets'
+import type { InkItem } from '../ink/items'
 import { loadSidecar } from '../services/annotations'
 import { readEntry } from '../services/files'
-import { useAppStore } from '../state/appStore'
+import { reportError, useAppStore } from '../state/appStore'
 import PageInk from './PageInk'
 import { useSidecarSave } from './useSidecarSave'
 import ZoomControls from './ZoomControls'
@@ -19,7 +21,9 @@ const PAD = 16
 export default function ImageViewer({ projectId, path }: { projectId: string; path: string }) {
   const readOnly = useAppStore((s) => s.readOnly)
   const session = useInkSession()
-  const { setLoaded, pageStrokes, update } = useSidecarSave(projectId, path)
+  const { setLoaded, pageStrokes, pageItems, update } = useSidecarSave(projectId, path)
+  const assets = useMemo(() => sidecarAssets(projectId, path), [projectId, path])
+  const imageInput = useRef<HTMLInputElement>(null)
   const [image, setImage] = useState<{ url: string; width: number; height: number } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [zoom, setZoom] = useState(1)
@@ -66,8 +70,8 @@ export default function ImageViewer({ projectId, path }: { projectId: string; pa
     }
   }, [fitZoom])
 
-  const onChange = useCallback((_key: string, s: Stroke[]) => {
-    if (image) update('0', { width: image.width, height: image.height }, s)
+  const onChange = useCallback((_key: string, s: Stroke[], items: InkItem[]) => {
+    if (image) update('0', { width: image.width, height: image.height }, s, items)
   }, [image, update])
 
   if (error) return <div className="editor-message">画像を開けませんでした: {error}</div>
@@ -78,7 +82,7 @@ export default function ImageViewer({ projectId, path }: { projectId: string; pa
   return (
     <div className="viewer">
       <div className="viewer-bar">
-        <InkToolbar state={session.tools} onChange={session.changeTools} canUndo={session.activeHistory.canUndo} canRedo={session.activeHistory.canRedo} onUndo={session.undo} onRedo={session.redo} />
+        <InkToolbar state={session.tools} onChange={session.changeTools} canUndo={session.activeHistory.canUndo} canRedo={session.activeHistory.canRedo} onUndo={session.undo} onRedo={session.redo} onInsertImage={() => imageInput.current?.click()} />
         <ZoomControls zoom={zoom} onZoom={setZoom} onFit={fit} min={MIN_ZOOM} max={MAX_ZOOM} />
       </div>
       <ZoomViewport
@@ -101,6 +105,9 @@ export default function ImageViewer({ projectId, path }: { projectId: string; pa
             height={h}
             logicalWidth={image.width}
             getStrokes={() => pageStrokes('0')}
+            getItems={() => pageItems('0')}
+            assets={assets}
+            textStyle={session.textStyle}
             tool={session.tools.tool}
             penColor={session.tools.penColor}
             finger={session.tools.finger}
@@ -113,6 +120,11 @@ export default function ImageViewer({ projectId, path }: { projectId: string; pa
           />
         </div>
       </ZoomViewport>
+      <input ref={imageInput} type="file" accept="image/*,.heic,.heif" hidden onChange={(e) => {
+        const f = e.target.files?.[0]
+        e.target.value = ''
+        if (f) session.insertImage(f).catch((err) => reportError(err, '画像を置けませんでした: '))
+      }} />
     </div>
   )
 }

@@ -1,19 +1,22 @@
 import { zipSync, type Zippable } from 'fflate'
 import { INK_LOGICAL_WIDTH, type NoteDoc } from '../formats/notedock'
+import { noteAssets, sidecarAssets, type AssetResolver } from '../ink/assets'
+import type { InkItem } from '../ink/items'
 import type { Stroke } from '../ink/model'
 import { strokePath } from '../ink/render'
 import { renderMarkdown } from '../lib/markdown'
 import { loadSidecar } from '../services/annotations'
-import { loadInk, loadNote, readNoteFile } from '../services/notes'
+import { loadInkData, loadNote, readNoteFile } from '../services/notes'
 import { extname, stem } from '../storage/paths'
 import { toBytes } from '../storage/StorageService'
 import { composeImage } from './burn'
+import { drawItems, itemsBottom } from './drawItems'
 import { makeFile } from './share'
 
 // 混在ノートの書き出し（内部仕様書 8.4）: Markdown＋PNG（ZIP）、印刷による PDF
 
-/** 手書きブロックを PNG にする（論理幅1000を scale 倍で描く。背景は白） */
-export async function renderInkPng(strokes: Stroke[], height: number, scale = 2): Promise<Blob> {
+/** 手書きブロックを PNG にする（論理幅1000を scale 倍で描く。背景は白。置いたものは線の下） */
+export async function renderInkPng(strokes: Stroke[], height: number, scale = 2, items: InkItem[] = [], assets?: AssetResolver): Promise<Blob> {
   const canvas = document.createElement('canvas')
   canvas.width = INK_LOGICAL_WIDTH * scale
   canvas.height = Math.max(1, Math.round(height * scale))
@@ -21,6 +24,7 @@ export async function renderInkPng(strokes: Stroke[], height: number, scale = 2)
   ctx.fillStyle = '#ffffff'
   ctx.fillRect(0, 0, canvas.width, canvas.height)
   ctx.scale(scale, scale)
+  await drawItems(ctx, items, assets)
   for (const s of strokes) {
     ctx.globalAlpha = s.opacity
     ctx.fillStyle = s.color
@@ -32,9 +36,9 @@ export async function renderInkPng(strokes: Stroke[], height: number, scale = 2)
   return blob
 }
 
-/** 手書きの線がある下端まで切り詰めた高さ（余白を少し残す） */
-function trimmedHeight(strokes: Stroke[], height: number): number {
-  let maxY = 0
+/** 手書きの線・置いたものがある下端まで切り詰めた高さ（余白を少し残す） */
+function trimmedHeight(strokes: Stroke[], items: InkItem[], height: number): number {
+  let maxY = itemsBottom(items)
   for (const s of strokes) for (let i = 1; i < s.points.length; i += 4) maxY = Math.max(maxY, s.points[i] + s.size)
   return Math.min(height, Math.max(120, Math.ceil(maxY + 40)))
 }
@@ -47,20 +51,24 @@ async function collectParts(projectId: string, notePath: string, note: NoteDoc):
   const parts: Part[] = []
   let inkNo = 0
   let imageNo = 0
+  const assets = noteAssets(projectId, notePath)
   for (const b of note.blocks) {
     if (b.type === 'text') {
       if (b.markdown.trim()) parts.push({ kind: 'text', markdown: b.markdown })
     } else if (b.type === 'ink') {
-      const strokes = await loadInk(projectId, notePath, b.id)
-      if (!strokes.length) continue
-      parts.push({ kind: 'asset', alt: '手書き', asset: { name: `ink-${++inkNo}.png`, blob: await renderInkPng(strokes, trimmedHeight(strokes, b.height)) } })
+      const { strokes, items } = await loadInkData(projectId, notePath, b.id)
+      if (!strokes.length && !items.length) continue
+      const blob = await renderInkPng(strokes, trimmedHeight(strokes, items, b.height), 2, items, assets)
+      parts.push({ kind: 'asset', alt: '手書き', asset: { name: `ink-${++inkNo}.png`, blob } })
     } else {
       const file = await readNoteFile(projectId, notePath, b.src)
       const sidecar = await loadSidecar(projectId, `${notePath}/${b.src}`, 'image-px')
       const strokes = sidecar.pages['0']?.strokes ?? []
+      const items = sidecar.pages['0']?.items ?? []
+      const marked = strokes.length > 0 || items.length > 0
       const jpeg = ['jpg', 'jpeg'].includes(extname(b.src))
-      const blob = strokes.length ? await composeImage(file, strokes, jpeg) : file
-      const ext = strokes.length ? (jpeg ? 'jpg' : 'png') : extname(b.src) || 'jpg'
+      const blob = marked ? await composeImage(file, strokes, jpeg, items, sidecarAssets(projectId, `${notePath}/${b.src}`)) : file
+      const ext = marked ? (jpeg ? 'jpg' : 'png') : extname(b.src) || 'jpg'
       parts.push({ kind: 'asset', alt: b.caption ?? '画像', ratio: b.displayRatio, asset: { name: `image-${++imageNo}.${ext}`, blob } })
     }
   }

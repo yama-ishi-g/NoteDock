@@ -8,6 +8,9 @@ export type Settings = {
   exportNaming: 'suffix' | 'original'
   tools: { [tool in InkToolName]: { color: string; sizeLevel: 0 | 1 | 2 } }
   eraserLevel: 0 | 1 | 2
+  /** テキストボックスの文字の大きさと色 */
+  textLevel: 0 | 1 | 2
+  textColor: string
 }
 
 export const SETTINGS_PATH = 'settings.json'
@@ -24,6 +27,8 @@ export const DEFAULT_SETTINGS: Settings = {
     marker: { color: '#ef9f27', sizeLevel: 1 },
   },
   eraserLevel: 1,
+  textLevel: 1,
+  textColor: '#2c2c2a',
 }
 
 export function migrateSettings(raw: unknown): Settings {

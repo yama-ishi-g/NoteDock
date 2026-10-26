@@ -1,6 +1,7 @@
 import { isNoteExt } from '../formats/notedock'
 import { projectFilesDir } from '../formats/project'
 import { getStorage } from '../storage'
+import { ASSETS_SUFFIX, assetsDirOf } from '../ink/assets'
 import { basename, dirname, extname, isSidecar, joinPath, sidecarOf, TMP_SUFFIX, uniqueName, validateName } from '../storage/paths'
 import { AppError, touchProject } from './projects'
 
@@ -45,6 +46,8 @@ export async function listChildren(projectId: string, dir: string): Promise<Tree
   for (const e of entries) {
     if (e.name.endsWith(TMP_SUFFIX)) continue
     if (e.kind === 'file' && isSidecar(e.name) && names.has(e.name.slice(0, -'.ink.json'.length))) continue
+    // 書き込みに置いた画像のフォルダ（xxx.pdf.ink.assets）も出さない
+    if (e.kind === 'dir' && e.name.endsWith(ASSETS_SUFFIX) && names.has(e.name.slice(0, -ASSETS_SUFFIX.length))) continue
     const path = joinPath(dir, e.name)
     // ノート（.notedock / .inkdock）はアプリ内ではフォルダだが、ツリーでは1つのファイルとして扱う
     if (e.kind === 'dir' && !isNoteExt(extname(e.name))) nodes.push({ name: e.name, path, kind: 'dir' })
@@ -89,8 +92,8 @@ export async function createFile(projectId: string, parent: string, name: string
 async function moveWithSidecar(projectId: string, from: string, to: string) {
   const storage = getStorage()
   await storage.move(abs(projectId, from), abs(projectId, to))
-  if (await storage.exists(abs(projectId, sidecarOf(from)))) {
-    await storage.move(abs(projectId, sidecarOf(from)), abs(projectId, sidecarOf(to)))
+  for (const companion of [sidecarOf, assetsDirOf]) {
+    if (await storage.exists(abs(projectId, companion(from)))) await storage.move(abs(projectId, companion(from)), abs(projectId, companion(to)))
   }
 }
 
@@ -123,8 +126,8 @@ export async function duplicateEntry(projectId: string, path: string): Promise<s
   const parent = dirname(path)
   const to = joinPath(parent, await availableName(projectId, parent, basename(path)))
   await storage.copy(abs(projectId, path), abs(projectId, to))
-  if (await storage.exists(abs(projectId, sidecarOf(path)))) {
-    await storage.copy(abs(projectId, sidecarOf(path)), abs(projectId, sidecarOf(to)))
+  for (const companion of [sidecarOf, assetsDirOf]) {
+    if (await storage.exists(abs(projectId, companion(path)))) await storage.copy(abs(projectId, companion(path)), abs(projectId, companion(to)))
   }
   await touchProject(projectId)
   return to
@@ -134,6 +137,7 @@ export async function deleteEntry(projectId: string, path: string): Promise<void
   const storage = getStorage()
   await storage.remove(abs(projectId, path))
   await storage.remove(abs(projectId, sidecarOf(path)))
+  await storage.remove(abs(projectId, assetsDirOf(path)))
   await touchProject(projectId)
 }
 

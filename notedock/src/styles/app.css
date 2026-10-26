@@ -404,19 +404,19 @@ button {
 /* 手書き */
 .note-editor { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .note-scroll { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; background: var(--surface); }
-.ink-block { position: relative; margin: 0 auto; }
+/* 手書きは紙として、ダークモードでも白地にする（紙の上に「置いたもの」→ 手書きの線 の順に重ねる） */
+.ink-block { position: relative; margin: 0 auto; background-color: #fff; }
 .ink-host {
   position: absolute;
   inset: 0;
+  z-index: 1;
   overflow: hidden;
-  /* 手書きは紙として、ダークモードでも白地にする */
-  background-color: #fff;
   touch-action: none;
   -webkit-user-select: none;
   user-select: none;
   -webkit-touch-callout: none;
 }
-.ink-host.grid {
+.ink-block.grid {
   background-image:
     linear-gradient(rgba(55, 138, 221, 0.13) 1px, transparent 1px),
     linear-gradient(90deg, rgba(55, 138, 221, 0.13) 1px, transparent 1px);
@@ -658,3 +658,38 @@ button {
 }
 .resize-handle:hover::after { opacity: 1; }
 .image-block-row { display: flex; justify-content: center; background: var(--bg); }
+
+/* 手書きの欄に置いた画像・テキストボックス */
+.ink-items { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+.ink-item { position: absolute; }
+.ink-item-image img { display: block; width: 100%; height: 100%; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.ink-item-text { white-space: pre-wrap; word-break: break-all; padding: 0; }
+.ink-item.selected { outline: 2px dashed #378add; outline-offset: 3px; }
+.ink-item-handle {
+  position: absolute;
+  right: -9px;
+  bottom: -9px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid #378add;
+}
+.ink-text-input {
+  position: absolute;
+  z-index: 3;
+  margin: 0;
+  padding: 0;
+  border: none;
+  outline: 2px solid #378add;
+  outline-offset: 3px;
+  background: rgba(255, 255, 255, 0.85);
+  resize: none;
+  overflow: hidden;
+  font-family: inherit;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.ink-block .selection-toolbar, .pdf-page .selection-toolbar, .image-page .selection-toolbar, .image-block .selection-toolbar { z-index: 5; }
+.page-ink { z-index: 1; }
+.size-letter { font-weight: 600; line-height: 1; }

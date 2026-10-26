@@ -1,4 +1,4 @@
-import { Eraser, Grid3x3, Hand, Highlighter, Lasso, PenLine, Redo2, Square, Undo2 } from 'lucide-react'
+import { Eraser, Grid3x3, Hand, Highlighter, ImagePlus, Lasso, MousePointer2, PenLine, Redo2, Square, Type, Undo2 } from 'lucide-react'
 import { useEffect, useRef } from 'react'
 import PressButton from '../components/PressButton'
 import type { InkBackground } from '../formats/notedock'
@@ -11,6 +11,8 @@ export type ToolState = {
   penLevel: SizeLevel
   markerLevel: SizeLevel
   eraserLevel: SizeLevel
+  textLevel: SizeLevel
+  textColor: string
   finger: boolean
 }
 
@@ -23,6 +25,8 @@ type Props = {
   onRedo: () => void
   background?: InkBackground
   onBackground?: (bg: InkBackground) => void
+  /** 画像を置く（写真・カメラ・ファイルから選ぶ） */
+  onInsertImage?: () => void
 }
 
 const TOOLS: { tool: Tool; label: string; icon: React.ReactNode }[] = [
@@ -30,20 +34,24 @@ const TOOLS: { tool: Tool; label: string; icon: React.ReactNode }[] = [
   { tool: 'marker', label: 'マーカー', icon: <Highlighter size={20} /> },
   { tool: 'eraser', label: '消しゴム', icon: <Eraser size={20} /> },
   { tool: 'lasso', label: '投げ縄', icon: <Lasso size={20} /> },
+  { tool: 'select', label: '選択（画像・テキストを動かす）', icon: <MousePointer2 size={20} /> },
+  { tool: 'text', label: 'テキストボックス', icon: <Type size={20} /> },
 ]
 
 /** 太さの見本（丸の大きさ） */
 function sizeDots(tool: Tool): number[] {
+  if (tool === 'text' || tool === 'select') return [10, 15, 21]
   const sizes = tool === 'marker' ? MARKER_SIZES : tool === 'eraser' ? ERASER_RADII.map((r) => r * 2) : PEN_SIZES
   const max = Math.max(...sizes)
   return sizes.map((s) => 6 + (s / max) * 14)
 }
 
-export default function InkToolbar({ state, onChange, canUndo, canRedo, onUndo, onRedo, background, onBackground }: Props) {
+export default function InkToolbar({ state, onChange, canUndo, canRedo, onUndo, onRedo, background, onBackground, onInsertImage }: Props) {
   const { tool } = state
-  const colorTool = tool === 'marker' ? 'marker' : 'pen'
-  const color = colorTool === 'marker' ? state.markerColor : state.penColor
-  const levelKey = tool === 'marker' ? 'markerLevel' : tool === 'eraser' ? 'eraserLevel' : 'penLevel'
+  const textTool = tool === 'text' || tool === 'select'
+  const colorTool = tool === 'marker' ? 'marker' : textTool ? 'text' : 'pen'
+  const color = colorTool === 'marker' ? state.markerColor : colorTool === 'text' ? state.textColor : state.penColor
+  const levelKey = tool === 'marker' ? 'markerLevel' : tool === 'eraser' ? 'eraserLevel' : textTool ? 'textLevel' : 'penLevel'
   const showSizes = tool !== 'lasso'
   const barRef = useRef<HTMLDivElement>(null)
 
@@ -61,7 +69,8 @@ export default function InkToolbar({ state, onChange, canUndo, canRedo, onUndo, 
     return () => bar.removeEventListener('touchstart', onTouchStart)
   }, [])
 
-  const setColor = (c: string) => onChange(colorTool === 'marker' ? { markerColor: c, tool: tool === 'eraser' ? 'pen' : tool } : { penColor: c, tool: tool === 'eraser' ? 'pen' : tool })
+  const setColor = (c: string) =>
+    onChange(colorTool === 'marker' ? { markerColor: c } : colorTool === 'text' ? { textColor: c } : { penColor: c, tool: tool === 'eraser' ? 'pen' : tool })
 
   return (
     <div ref={barRef} className="ink-toolbar" role="toolbar" aria-label="手書きツール">
@@ -76,8 +85,12 @@ export default function InkToolbar({ state, onChange, canUndo, canRedo, onUndo, 
       {showSizes && (
         <div className="ink-group">
           {sizeDots(tool).map((d, i) => (
-            <PressButton key={i} className={`tool-btn size ${state[levelKey] === i ? 'on' : ''}`} aria-label={['細', '中', '太'][i]} title={['細', '中', '太'][i]} onPress={() => onChange({ [levelKey]: i as SizeLevel })}>
-              <span className="size-dot" style={{ width: d, height: d, background: tool === 'eraser' ? 'transparent' : color, borderColor: tool === 'eraser' ? 'currentColor' : color }} />
+            <PressButton key={i} className={`tool-btn size ${state[levelKey] === i ? 'on' : ''}`} aria-label={(textTool ? ['小', '中', '大'] : ['細', '中', '太'])[i]} title={(textTool ? ['文字 小', '文字 中', '文字 大'] : ['細', '中', '太'])[i]} onPress={() => onChange({ [levelKey]: i as SizeLevel })}>
+              {textTool ? (
+                <span className="size-letter" style={{ fontSize: d, color }}>あ</span>
+              ) : (
+                <span className="size-dot" style={{ width: d, height: d, background: tool === 'eraser' ? 'transparent' : color, borderColor: tool === 'eraser' ? 'currentColor' : color }} />
+              )}
             </PressButton>
           ))}
         </div>
@@ -91,6 +104,12 @@ export default function InkToolbar({ state, onChange, canUndo, canRedo, onUndo, 
           <label className={`color-btn custom ${PRESET_COLORS.includes(color as (typeof PRESET_COLORS)[number]) ? '' : 'on'}`} title="ほかの色" style={{ background: PRESET_COLORS.includes(color as (typeof PRESET_COLORS)[number]) ? undefined : color }}>
             <input type="color" value={color} onChange={(e) => setColor(e.target.value)} aria-label="ほかの色" />
           </label>
+        </div>
+      )}
+
+      {onInsertImage && (
+        <div className="ink-group">
+          <PressButton className="tool-btn" aria-label="画像を置く" title="画像を置く" onPress={onInsertImage}><ImagePlus size={20} /></PressButton>
         </div>
       )}
 
