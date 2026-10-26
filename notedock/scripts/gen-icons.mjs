@@ -1,5 +1,5 @@
 // アプリアイコン（PNG）を生成する。デザインを変えたときだけ手動で実行する: node scripts/gen-icons.mjs
-import { writeFileSync } from 'node:fs'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { deflateSync } from 'node:zlib'
@@ -7,6 +7,8 @@ import { deflateSync } from 'node:zlib'
 const outDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'public', 'icons')
 
 const BLUE = [0x18, 0x5f, 0xa5]
+/** 開発版はノートの線をオレンジにする */
+const ORANGE = [0xd8, 0x5a, 0x30]
 const WHITE = [0xff, 0xff, 0xff]
 
 const crcTable = Array.from({ length: 256 }, (_, n) => {
@@ -37,7 +39,7 @@ const inRoundRect = (u, v, x0, y0, x1, y1, r) => {
 }
 
 // maskable=true のときは全面を背景色にし、絵柄を中央80%（安全領域）に収める
-function render(size, { maskable = false, rounded = true } = {}) {
+function render(size, { maskable = false, rounded = true, lineColor = BLUE } = {}) {
   const scale = maskable ? 0.7 : 1
   const off = (1 - scale) / 2
   const rows = []
@@ -58,7 +60,7 @@ function render(size, { maskable = false, rounded = true } = {}) {
       }
       if (inRoundRect(p, q, 0.25, 0.19, 0.75, 0.81, 0.06)) color = WHITE
       for (const [ly, lx1] of [[0.375, 0.66], [0.485, 0.66], [0.595, 0.53]]) {
-        if (inRoundRect(p, q, 0.34, ly - 0.025, lx1, ly + 0.025, 0.025)) color = BLUE
+        if (inRoundRect(p, q, 0.34, ly - 0.025, lx1, ly + 0.025, 0.025)) color = lineColor
       }
       if (color) {
         if (!alpha) alpha = 255
@@ -86,7 +88,9 @@ const targets = [
   // iOS は自前で角丸にするため、四角いまま塗りつぶす
   ['apple-touch-icon-180.png', 180, { rounded: false }],
 ]
+mkdirSync(join(outDir, 'dev'), { recursive: true })
 for (const [name, size, opts] of targets) {
   writeFileSync(join(outDir, name), render(size, opts))
-  console.log(`generated ${name}`)
+  writeFileSync(join(outDir, 'dev', name), render(size, { ...opts, lineColor: ORANGE }))
+  console.log(`generated ${name} (本番・開発版)`)
 }

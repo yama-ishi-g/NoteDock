@@ -22,12 +22,17 @@ const isDev = channel === 'dev';
 const PROD_BASE = '/NoteDock/';
 const DEV_BASE = '/NoteDock/dev/';
 const appName = isDev ? 'NoteDock開発版' : 'NoteDock';
+// 開発版のアイコンはノートの線がオレンジ（scripts/gen-icons.mjs で生成）
+const iconDir = isDev ? 'icons/dev/' : 'icons/';
 
-/** index.html のアプリ名（タブ・ホーム画面の名前）を開発版用にする */
+/** index.html のアプリ名（タブ・ホーム画面の名前）とアイコンを開発版用にする */
 function channelHtml(): Plugin {
     return {
         name: 'notedock-channel-html',
-        transformIndexHtml: (html) => html.replaceAll('>NoteDock<', `>${appName}<`).replace('content="NoteDock"', `content="${appName}"`),
+        transformIndexHtml: (html) => {
+            const named = html.replaceAll('>NoteDock<', `>${appName}<`).replace('content="NoteDock"', `content="${appName}"`);
+            return isDev ? named.replace('favicon.svg"', 'icons/dev/favicon.svg"').replace('icons/apple-touch-icon-180.png', 'icons/dev/apple-touch-icon-180.png') : named;
+        },
     };
 }
 
@@ -41,7 +46,7 @@ export default defineConfig(({ command, isPreview }) => ({
         VitePWA({
             // 新しい版が届いたら「更新があります」を表示し、利用者の操作で切り替える（編集中の内容を失わないため）
             registerType: 'prompt',
-            includeAssets: ['favicon.svg', 'icons/apple-touch-icon-180.png'],
+            includeAssets: isDev ? ['icons/dev/favicon.svg', 'icons/dev/apple-touch-icon-180.png'] : ['favicon.svg', 'icons/apple-touch-icon-180.png'],
             manifest: {
                 // 本番と開発版をホーム画面に両方追加できるよう、id を分ける
                 id: isDev ? DEV_BASE : PROD_BASE,
@@ -54,9 +59,9 @@ export default defineConfig(({ command, isPreview }) => ({
                 theme_color: isDev ? '#d85a30' : '#185fa5',
                 background_color: '#ffffff',
                 icons: [
-                    { src: 'icons/icon-192.png', sizes: '192x192', type: 'image/png' },
-                    { src: 'icons/icon-512.png', sizes: '512x512', type: 'image/png' },
-                    { src: 'icons/icon-512-maskable.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+                    { src: `${iconDir}icon-192.png`, sizes: '192x192', type: 'image/png' },
+                    { src: `${iconDir}icon-512.png`, sizes: '512x512', type: 'image/png' },
+                    { src: `${iconDir}icon-512-maskable.png`, sizes: '512x512', type: 'image/png', purpose: 'maskable' },
                 ],
             },
             workbox: {
