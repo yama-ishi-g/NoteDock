@@ -2,12 +2,13 @@ import { getStroke } from 'perfect-freehand'
 
 // 段階0の手書き試作。描き心地・手のひら対策・直線化・指スクロールを検証する（本実装は段階2で作り直す）
 
-export type Tool = 'pen' | 'marker'
+export type Tool = 'pen' | 'marker' | 'eraser'
+type StrokeTool = Exclude<Tool, 'eraser'>
 
 type Point = [x: number, y: number, pressure: number]
 
 type Stroke = {
-  tool: Tool
+  tool: StrokeTool
   color: string
   points: Point[]
   simulatePressure: boolean
@@ -37,9 +38,54 @@ export type InkPadOptions = {
 const PALM_MS = 500
 const HOLD_RADIUS = 3
 const MIN_LINE_LENGTH = 20
+const MAX_HISTORY = 100
+const ERASER_RADIUS = 12
+const DENSIFY_STEP = 2
+
+const strokeSize = (s: Stroke) => (s.tool === 'marker' ? 18 : 4)
+
+// 点の間隔が step 以下になるよう補間する（2点だけの直線も途中で消せるようにする）
+function densify(points: Point[], step: number): Point[] {
+  const out: Point[] = [points[0]]
+  for (let i = 1; i < points.length; i++) {
+    const [x0, y0, p0] = points[i - 1]
+    const [x1, y1, p1] = points[i]
+    const n = Math.ceil(Math.hypot(x1 - x0, y1 - y0) / step)
+    for (let k = 1; k <= n; k++) {
+      const t = k / n
+      out.push([x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, p0 + (p1 - p0) * t])
+    }
+  }
+  return out
+}
+
+/** 消しゴムの円にかかった部分を取り除き、残りを別々の線に分ける。かからなければ null */
+function eraseFromStroke(stroke: Stroke, x: number, y: number, r: number): Stroke[] | null {
+  const reach = r + strokeSize(stroke) / 2
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+  for (const [px, py] of stroke.points) {
+    minX = Math.min(minX, px); maxX = Math.max(maxX, px)
+    minY = Math.min(minY, py); maxY = Math.max(maxY, py)
+  }
+  if (x < minX - reach || x > maxX + reach || y < minY - reach || y > maxY + reach) return null
+
+  const pts = densify(stroke.points, DENSIFY_STEP)
+  const hit = pts.map(([px, py]) => Math.hypot(px - x, py - y) <= reach)
+  if (!hit.includes(true)) return null
+
+  const pieces: Stroke[] = []
+  let run: Point[] = []
+  const flush = () => {
+    if (run.length >= 2) pieces.push({ ...stroke, points: run, isLine: false, simulatePressure: false })
+    run = []
+  }
+  pts.forEach((p, i) => (hit[i] ? flush() : run.push(p)))
+  flush()
+  return pieces
+}
 
 function outlinePath(stroke: Stroke): Path2D {
-  const size = stroke.tool === 'marker' ? 18 : 4
+  const size = strokeSize(stroke)
   const pts = stroke.isLine && stroke.points.length >= 2
     ? [stroke.points[0], stroke.points[stroke.points.length - 1]]
     : stroke.points
@@ -78,7 +124,13 @@ export class InkPad {
   private committed: HTMLCanvasElement
   private live: HTMLCanvasElement
   private strokes: Stroke[] = []
+  // 元に戻す用: 各操作の直前の線の一覧
+  private history: Stroke[][] = []
   private current: Stroke | null = null
+  private erasePointer = -1
+  private eraseChanged = false
+  private eraserPos: { x: number; y: number } | null = null
+  private committedDirty = false
   private currentPointer = -1
   private currentType = ''
   private anchor = { x: 0, y: 0, t: 0 }
@@ -107,7 +159,8 @@ export class InkPad {
       Object.assign(c.style, { position: 'absolute', inset: '0', width: '100%', height: '100%' })
       container.appendChild(c)
     }
-    Object.assign(container.style, { position: 'relative', userSelect: 'none', webkitUserSelect: 'none', webkitTouchCallout: 'none' })
+    container.style.position = 'relative'
+    for (const prop of ['user-select', '-webkit-user-select', '-webkit-touch-callout']) container.style.setProperty(prop, 'none')
     this.applyTouchAction()
     container.addEventListener('pointerdown', this.onDown)
     container.addEventListener('pointermove', this.onMove)
@@ -142,13 +195,23 @@ export class InkPad {
   }
 
   clear() {
+    if (!this.strokes.length) return
+    this.pushHistory()
     this.strokes = []
     this.redrawCommitted()
   }
 
+  /** 1つ前の操作（描く・消す・全消去）を取り消す */
   undo() {
-    this.strokes.pop()
+    const prev = this.history.pop()
+    if (!prev) return
+    this.strokes = prev
     this.redrawCommitted()
+  }
+
+  private pushHistory() {
+    this.history.push(this.strokes)
+    if (this.history.length > MAX_HISTORY) this.history.shift()
   }
 
   private resize() {
@@ -198,11 +261,22 @@ export class InkPad {
       // ペンが触れたら、指で描いている途中の線は取り消す（手のひら対策）
       if (this.current && this.currentType === 'touch') this.current = null
     }
-    if (this.current) return
-    if (this.canDraw(e)) {
+    if (this.current || this.erasePointer >= 0) return
+    if (this.canDraw(e) && this.tool === 'eraser') {
+      this.container.setPointerCapture(e.pointerId)
+      this.erasePointer = e.pointerId
+      this.currentType = e.pointerType
+      this.pushHistory()
+      this.eraseChanged = false
+      this.eraserPos = null
+      const [x, y] = this.pos(e)
+      this.eraseAt(x, y)
+      this.schedule()
+      e.preventDefault()
+    } else if (this.canDraw(e)) {
       this.container.setPointerCapture(e.pointerId)
       const p = this.pos(e)
-      this.current = { tool: this.tool, color: this.color, points: [p], simulatePressure: e.pointerType !== 'pen', isLine: false }
+      this.current = { tool: this.tool as StrokeTool, color: this.color, points: [p], simulatePressure: e.pointerType !== 'pen', isLine: false }
       this.currentPointer = e.pointerId
       this.currentType = e.pointerType
       this.anchor = { x: p[0], y: p[1], t: performance.now() }
@@ -220,6 +294,15 @@ export class InkPad {
     if (e.pointerId === this.panPointer) {
       this.opts.onPan?.(e.clientX - this.panLast.x, e.clientY - this.panLast.y)
       this.panLast = { x: e.clientX, y: e.clientY }
+      return
+    }
+    if (e.pointerId === this.erasePointer) {
+      const events = e.getCoalescedEvents?.() ?? [e]
+      for (const ev of events.length ? events : [e]) {
+        const [x, y] = this.pos(ev)
+        this.eraseAt(x, y)
+      }
+      this.schedule()
       return
     }
     if (!this.current || e.pointerId !== this.currentPointer) return
@@ -248,8 +331,13 @@ export class InkPad {
       this.panPointer = -1
       return
     }
+    if (e.pointerId === this.erasePointer) {
+      this.endErase()
+      return
+    }
     if (!this.current || e.pointerId !== this.currentPointer) return
-    this.strokes.push(this.current)
+    this.pushHistory()
+    this.strokes = [...this.strokes, this.current]
     drawStroke(this.ctx(this.committed), this.current)
     this.current = null
     this.currentType = ''
@@ -263,11 +351,51 @@ export class InkPad {
   }
 
   private onSelectStart = (e: Event) => {
-    if (this.current) e.preventDefault()
+    if (this.current || this.erasePointer >= 0) e.preventDefault()
+  }
+
+  private eraseAt(x: number, y: number) {
+    // 速くなぞったときに線を飛び越さないよう、前回の位置との間を半径の半分おきに補間する
+    const prev = this.eraserPos
+    this.eraserPos = { x, y }
+    if (prev) {
+      const n = Math.floor(Math.hypot(x - prev.x, y - prev.y) / (ERASER_RADIUS / 2))
+      for (let k = 1; k <= n; k++) this.eraseAtPoint(prev.x + ((x - prev.x) * k) / (n + 1), prev.y + ((y - prev.y) * k) / (n + 1))
+    }
+    this.eraseAtPoint(x, y)
+  }
+
+  private eraseAtPoint(x: number, y: number) {
+    let changed = false
+    const next: Stroke[] = []
+    for (const s of this.strokes) {
+      const pieces = eraseFromStroke(s, x, y, ERASER_RADIUS)
+      if (pieces) {
+        changed = true
+        next.push(...pieces)
+      } else {
+        next.push(s)
+      }
+    }
+    if (changed) {
+      this.strokes = next
+      this.eraseChanged = true
+      this.committedDirty = true
+    }
+  }
+
+  private endErase() {
+    // 何も消さなかった場合は、元に戻すの履歴に残さない
+    if (!this.eraseChanged) this.history.pop()
+    this.erasePointer = -1
+    this.currentType = ''
+    this.eraserPos = null
+    this.ctx(this.live).clearRect(0, 0, this.live.width, this.live.height)
   }
 
   private onCancel = (e: PointerEvent) => {
     this.stats.cancels++
+    if (e.pointerId === this.erasePointer) this.endErase()
     if (e.pointerId === this.panPointer) this.panPointer = -1
     if (e.pointerId === this.currentPointer) {
       this.current = null
@@ -286,6 +414,19 @@ export class InkPad {
     const now = performance.now()
     const ctx = this.ctx(this.live)
     ctx.clearRect(0, 0, this.live.width, this.live.height)
+    if (this.committedDirty) {
+      this.committedDirty = false
+      this.redrawCommitted()
+    }
+    if (this.erasePointer >= 0 && this.eraserPos) {
+      // 消しゴムの範囲を円で表示する
+      ctx.beginPath()
+      ctx.arc(this.eraserPos.x, this.eraserPos.y, ERASER_RADIUS, 0, Math.PI * 2)
+      ctx.strokeStyle = '#888'
+      ctx.lineWidth = 1
+      ctx.stroke()
+      return
+    }
     if (!this.current) return
 
     if (!this.current.isLine && now - this.anchor.t >= this.opts.holdMs()) {

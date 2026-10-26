@@ -55,6 +55,7 @@ export default function InkSection() {
       <div className="row">
         <button className={tool === 'pen' ? 'on' : ''} onClick={() => setTool('pen')}>ペン</button>
         <button className={tool === 'marker' ? 'on' : ''} onClick={() => setTool('marker')}>マーカー</button>
+        <button className={tool === 'eraser' ? 'on' : ''} onClick={() => setTool('eraser')}>消しゴム</button>
         {COLORS.map((c) => (
           <button key={c} aria-label={c} onClick={() => setColor(c)}
             style={{ width: 30, height: 30, padding: 0, borderRadius: '50%', background: c, outline: color === c ? '2px solid var(--accent)' : 'none', outlineOffset: 2 }} />
@@ -77,7 +78,7 @@ export default function InkSection() {
         <dt>直線化</dt><dd>{snaps} 回</dd>
       </dl>
       <p className="hint">
-        確認: 線がペン先に遅れずについてくるか / 筆圧で太さが変わるか / 手をついて描いても余計な線が出ないか（指で描くONでも試す） / 線の最後で止めると直線になり、離すまで向きを変えられるか
+        確認: 線がペン先に遅れずについてくるか / 筆圧で太さが変わるか / 手をついて描いても余計な線が出ないか（指で描くONでも試す） / 線の最後で止めると直線になり、離すまで向きを変えられるか / 消しゴムでなぞった部分だけ消えるか / 「元に戻す」で描いた線・消した部分・全消去が1つずつ戻るか
       </p>
     </section>
   )
