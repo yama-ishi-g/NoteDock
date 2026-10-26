@@ -26,7 +26,7 @@ const SAVE_DELAY_MS = 1000
 type InkContentData = { strokes: Stroke[]; items: InkItem[] }
 
 /**
- * .notedock のエディタ（S04）。テキスト・手書き・画像のブロックを縦に並べる。
+ * ノート（.mixdock / .notedock）のエディタ（S04）。テキスト・手書き・画像のブロックを縦に並べる。
  * 手書きブロック1つだけのノート（手書きノート）もこのエディタで開く
  */
 export default function NoteEditor({ projectId, path }: { projectId: string; path: string }) {

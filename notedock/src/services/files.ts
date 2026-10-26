@@ -9,7 +9,7 @@ import { AppError, touchProject } from './projects'
 
 export type FileType = 'text' | 'markdown' | 'pdf' | 'image' | 'note' | 'inknote' | 'other'
 
-/** ノート（混在ノート .notedock・手書きノート .inkdock）か */
+/** ノート（混在ノート .mixdock・手書きノート .notedock）か */
 export const isNoteType = (t: FileType | undefined | null) => t === 'note' || t === 'inknote'
 
 export type TreeNode = {
@@ -28,8 +28,8 @@ export function fileTypeOf(name: string): FileType {
   if (ext === 'txt') return 'text'
   if (ext === 'md' || ext === 'markdown') return 'markdown'
   if (ext === 'pdf') return 'pdf'
-  if (ext === 'notedock') return 'note'
-  if (ext === 'inkdock') return 'inknote'
+  if (ext === 'mixdock') return 'note'
+  if (ext === 'notedock' || ext === 'inkdock') return 'inknote'
   if (IMAGE_EXTS.has(ext)) return 'image'
   return 'other'
 }
@@ -49,7 +49,7 @@ export async function listChildren(projectId: string, dir: string): Promise<Tree
     // 書き込みに置いた画像のフォルダ（xxx.pdf.ink.assets）も出さない
     if (e.kind === 'dir' && e.name.endsWith(ASSETS_SUFFIX) && names.has(e.name.slice(0, -ASSETS_SUFFIX.length))) continue
     const path = joinPath(dir, e.name)
-    // ノート（.notedock / .inkdock）はアプリ内ではフォルダだが、ツリーでは1つのファイルとして扱う
+    // ノート（.mixdock / .notedock）はアプリ内ではフォルダだが、ツリーでは1つのファイルとして扱う
     if (e.kind === 'dir' && !isNoteExt(extname(e.name))) nodes.push({ name: e.name, path, kind: 'dir' })
     else nodes.push({ name: e.name, path, kind: 'file', fileType: fileTypeOf(e.name), size: e.size })
   }

@@ -46,10 +46,10 @@ describe('files', () => {
     await storage.writeFile(p('a.pdf.ink.json'), '{}')
     await storage.writeFile(p('x.tmp'), '')
     await createFolder(pid, '', '資料')
-    await storage.mkdir(p('図.notedock'))
+    await storage.mkdir(p('図.mixdock'))
     const nodes = await listChildren(pid, '')
-    expect(nodes.map((n) => n.name)).toEqual(['資料', 'a.pdf', 'b.txt', '図.notedock'])
-    expect(nodes.find((n) => n.name === '図.notedock')).toMatchObject({ kind: 'file', fileType: 'note' })
+    expect(nodes.map((n) => n.name)).toEqual(['資料', 'a.pdf', 'b.txt', '図.mixdock'])
+    expect(nodes.find((n) => n.name === '図.mixdock')).toMatchObject({ kind: 'file', fileType: 'note' })
   })
 
   it('同じ名前で作ると (2) になる', async () => {

@@ -9,7 +9,7 @@ import { makeFile } from './share'
 export const PROJECT_MARKER = 'notedock-project.json'
 
 // 既に圧縮されている形式は、もう一度圧縮しない
-const STORED_EXT = /\.(pdf|png|jpe?g|webp|gif|zip|notedock|inkdock)$/i
+const STORED_EXT = /\.(pdf|png|jpe?g|webp|gif|zip|mixdock|notedock|inkdock)$/i
 
 export function dateStamp(d = new Date()) {
   const p = (n: number) => String(n).padStart(2, '0')

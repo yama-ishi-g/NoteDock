@@ -4,7 +4,7 @@ import { getStorage } from '../storage'
 import { extname, joinPath } from '../storage/paths'
 
 // 手書きの欄に置いた画像の保存場所
-//   ノート（.notedock / .inkdock）: ノートのフォルダの images/ （src = images/xxx.jpg）
+//   ノート（.mixdock / .notedock）: ノートのフォルダの images/ （src = images/xxx.jpg）
 //   PDF・画像への書き込み: 付属フォルダ xxx.pdf.ink.assets/ （src = xxx.jpg）
 
 export type AssetResolver = {

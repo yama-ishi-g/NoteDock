@@ -20,6 +20,7 @@ import { makeFile, shareFile } from '../io/share'
 import { zipFolder } from '../io/folderZip'
 import { createFile, createFolder, deleteEntry, duplicateEntry, entryExists, fileTypeOf, isNoteType, listChildren, moveEntry, readEntry, renameEntry, type TreeNode } from '../services/files'
 import { getProject, recoverTempFiles, saveProject } from '../services/projects'
+import { migrateNoteNames, syncNoteKind } from '../services/notes'
 import { reportError, useAppStore } from '../state/appStore'
 import { dialogs } from '../state/dialogs'
 import { basename, dirname, extname, validateName } from '../storage/paths'
@@ -96,6 +97,12 @@ export default function ProjectView({ projectId }: { projectId: string }) {
     ;(async () => {
       try {
         await recoverTempFiles(projectId)
+        // 以前の拡張子のノート（.inkdock、v1.0.0 までの混在ノート .notedock）を今の拡張子にそろえる
+        const renamed = await migrateNoteNames(projectId)
+        for (const [from, to] of renamed) {
+          const cur = useAppStore.getState().openFile
+          if (cur && (cur === from || cur.startsWith(`${from}/`))) useAppStore.getState().setOpenFile(to + cur.slice(from.length))
+        }
         const m = await getProject(projectId)
         if (cancelled) return
         setMeta(m)
@@ -247,12 +254,14 @@ export default function ProjectView({ projectId }: { projectId: string }) {
   const rename = async (node: TreeNode) => {
     if (guard()) return
     const input = await dialogs.prompt({ title: '名前の変更', label: '新しい名前', initial: node.name, okLabel: '変更', selectStem: node.kind === 'file', validate: validateName })
-    // ノートは拡張子（.notedock / .inkdock）を外すとフォルダになってしまうため、付け直す（もう一方の拡張子への変更はできる）
+    // ノートは拡張子（.mixdock / .notedock）を外すとフォルダになってしまうため、付け直す（もう一方の拡張子への変更はできる）
     const name = input && isNoteType(node.fileType) ? withNoteExt(input, extname(node.name)) : input
     if (!name || name === node.name) return
     try {
       if (touchesOpenFile(node.path)) await activeEditor.flush()
       const to = await renameEntry(projectId, node.path, name)
+      // 拡張子を付け替えたら、ノートの種類も合わせる（以前の形式からの移行で元に戻されないように）
+      if (isNoteType(node.fileType) && extname(to) !== extname(node.path)) await syncNoteKind(projectId, to)
       followPath(node.path, to)
       if (node.kind === 'dir' && expanded.has(node.path)) {
         const next = new Set([...expanded].map((p) => (p === node.path || p.startsWith(`${node.path}/`) ? to + p.slice(node.path.length) : p)))

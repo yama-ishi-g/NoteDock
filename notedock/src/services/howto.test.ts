@@ -15,8 +15,8 @@ describe('使い方プロジェクト', () => {
   it('説明のファイルとノートを用意する', async () => {
     const id = await createHowToProject()
     const names = (await listChildren(id, '')).map((n) => n.name)
-    expect(names).toEqual(['1_はじめに.md', '2_テキストとMarkdown.md', '3_手書きと混在ノート.notedock', '4_PDF・画像への書き込み.md', '5_バックアップとWindows.md'])
-    const note = await loadNote(id, '3_手書きと混在ノート.notedock')
+    expect(names).toEqual(['1_はじめに.md', '2_テキストとMarkdown.md', '3_手書きと混在ノート.mixdock', '4_PDF・画像への書き込み.md', '5_バックアップとWindows.md'])
+    const note = await loadNote(id, '3_手書きと混在ノート.mixdock')
     expect(note.blocks.map((b) => b.type)).toEqual(['text', 'ink', 'text'])
   })
 

@@ -12,6 +12,7 @@ const MIME: Record<string, string> = {
   webp: 'image/webp',
   gif: 'image/gif',
   zip: 'application/zip',
+  mixdock: 'application/zip',
   notedock: 'application/zip',
   inkdock: 'application/zip',
   json: 'application/json',

@@ -44,7 +44,7 @@ NoteDock は、iPad で使うオフラインのノートアプリです。
 ## 次に読むもの
 
 1. 2_テキストとMarkdown.md
-2. 3_手書きと混在ノート.notedock
+2. 3_手書きと混在ノート.mixdock
 3. 4_PDF・画像への書き込み.md
 4. 5_バックアップとWindows.md
 `
@@ -139,6 +139,7 @@ function howtoNote(): { note: NoteDoc; inkId: string } {
   const ink = newInkBlock('grid', 700)
   const note: NoteDoc = {
     formatVersion: 1,
+    kind: 'mixed',
     id: crypto.randomUUID(),
     createdAt: now,
     updatedAt: now,
@@ -177,7 +178,7 @@ function howtoNote(): { note: NoteDoc; inkId: string } {
 
 ## 書き出し
 
-ツリーの「…」→「書き出し」で、**.notedock**（NoteDock で開ける）、**Markdown＋画像（ZIP）**、**PDF**（印刷画面から保存）を選べます。`),
+ツリーの「…」→「書き出し」で、**.mixdock**（NoteDock で開ける。手書きノートは .notedock）、**Markdown＋画像（ZIP）**、**PDF**（印刷画面から保存）を選べます。`),
     ],
   }
   return { note, inkId: ink.id }
@@ -233,7 +234,7 @@ export async function createHowToProject(): Promise<string> {
   await w('1_はじめに.md', README)
   await w('2_テキストとMarkdown.md', TEXT)
   const { note, inkId } = howtoNote()
-  const notePath = '3_手書きと混在ノート.notedock'
+  const notePath = '3_手書きと混在ノート.mixdock'
   await w(`${notePath}/${inkPath(inkId)}`, JSON.stringify({ formatVersion: 1, strokes: [] }))
   const image = await practiceImage()
   if (image) {

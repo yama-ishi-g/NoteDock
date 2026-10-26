@@ -2,14 +2,18 @@ import { migrateItems, type InkItem } from '../ink/items'
 import type { Stroke } from '../ink/model'
 
 // ノートの形式（内部仕様書 5.4）。アプリ内ではフォルダとして持つ
-//   .notedock  混在ノート（文章・手書き・画像）
-//   .inkdock   手書きノート（手書きブロック1つ。形式は .notedock と同じ。ツリーで見分けるために拡張子を分ける）
+//   .mixdock   混在ノート（文章・手書き・画像）
+//   .notedock  手書きノート（手書きブロック1つから始まる。形式は .mixdock と同じ。ツリーで見分けるために拡張子を分ける）
+//   .inkdock   以前の開発版の手書きノート（プロジェクトを開くと .notedock に名前を変える）
+//   ※ v1.0.0 までは .notedock が混在ノートだった。note.json の kind で見分ける（kind がなければ中身で判定する。noteKindOf）
 //   note.json            ノートの構成
 //   ink/{blockId}.json   手書きブロックの線
 
-export const NOTE_EXT = 'notedock'
-export const INK_NOTE_EXT = 'inkdock'
-export const NOTE_EXTS = [NOTE_EXT, INK_NOTE_EXT] as const
+export const MIXED_NOTE_EXT = 'mixdock'
+export const INK_NOTE_EXT = 'notedock'
+/** 以前の開発版の手書きノート */
+export const LEGACY_INK_NOTE_EXT = 'inkdock'
+export const NOTE_EXTS = [MIXED_NOTE_EXT, INK_NOTE_EXT, LEGACY_INK_NOTE_EXT] as const
 export const isNoteExt = (ext: string) => (NOTE_EXTS as readonly string[]).includes(ext.toLowerCase())
 export const NOTE_JSON = 'note.json'
 /** 手書きブロックの論理座標の横幅 */
@@ -41,8 +45,12 @@ export type ImageBlock = {
 }
 export type Block = TextBlock | InkBlock | ImageBlock
 
+export type NoteKind = 'mixed' | 'handwriting'
+
 export type NoteDoc = {
   formatVersion: 1
+  /** 混在ノート / 手書きノート（拡張子の付け替え・以前の形式からの移行に使う。v1.0.0 までのファイルにはない） */
+  kind?: NoteKind
   id: string
   createdAt: string
   updatedAt: string
@@ -64,7 +72,7 @@ export function newTextBlock(markdown = ''): TextBlock {
 /** 文章から始まる混在ノート（新規ノート） */
 export function newMixedNote(): NoteDoc {
   const now = new Date().toISOString()
-  return { formatVersion: 1, id: crypto.randomUUID(), createdAt: now, updatedAt: now, blocks: [newTextBlock()] }
+  return { formatVersion: 1, kind: 'mixed', id: crypto.randomUUID(), createdAt: now, updatedAt: now, blocks: [newTextBlock()] }
 }
 
 /** 画像ブロックの画像のパス（ノートのフォルダからの相対パス） */
@@ -73,8 +81,16 @@ export const imagePath = (block: ImageBlock) => block.src
 /** 手書きブロック1つだけのノート（新規手書きノート） */
 export function newHandwritingNote(): NoteDoc {
   const now = new Date().toISOString()
-  return { formatVersion: 1, id: crypto.randomUUID(), createdAt: now, updatedAt: now, blocks: [newInkBlock()] }
+  return { formatVersion: 1, kind: 'handwriting', id: crypto.randomUUID(), createdAt: now, updatedAt: now, blocks: [newInkBlock()] }
 }
+
+/** ノートの種類。kind がなければ（v1.0.0 までのファイル）、手書きブロック1つだけなら手書きノート、それ以外は混在ノートとする */
+export function noteKindOf(note: Pick<NoteDoc, 'kind' | 'blocks'>): NoteKind {
+  if (note.kind === 'mixed' || note.kind === 'handwriting') return note.kind
+  return note.blocks.length === 1 && note.blocks[0].type === 'ink' ? 'handwriting' : 'mixed'
+}
+
+export const noteExtOf = (kind: NoteKind) => (kind === 'mixed' ? MIXED_NOTE_EXT : INK_NOTE_EXT)
 
 export function migrateNote(raw: unknown): NoteDoc {
   const n = raw as Partial<NoteDoc>
@@ -82,6 +98,7 @@ export function migrateNote(raw: unknown): NoteDoc {
   const now = new Date().toISOString()
   return {
     formatVersion: 1,
+    ...(n.kind === 'mixed' || n.kind === 'handwriting' ? { kind: n.kind } : {}),
     id: n.id ?? crypto.randomUUID(),
     createdAt: n.createdAt ?? now,
     updatedAt: n.updatedAt ?? now,

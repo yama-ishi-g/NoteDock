@@ -4,10 +4,10 @@ import { isNoteExt } from '../formats/notedock'
 import { extname } from '../storage/paths'
 import { isImageFile, prepareImage } from './images'
 
-export const IMPORT_EXTENSIONS = ['txt', 'md', 'notedock', 'inkdock', 'pdf', 'png', 'jpg', 'jpeg', 'webp', 'heic', 'heif']
+export const IMPORT_EXTENSIONS = ['txt', 'md', 'mixdock', 'notedock', 'inkdock', 'pdf', 'png', 'jpg', 'jpeg', 'webp', 'heic', 'heif']
 
 /** <input type="file"> の accept。画像を含めると iPad は 写真ライブラリ／写真を撮る／ファイルを選択 を表示する */
-export const IMPORT_ACCEPT = ['.txt', '.md', '.notedock', '.inkdock', '.pdf', 'image/*', '.heic', '.heif', 'text/plain', 'text/markdown', 'application/pdf'].join(',')
+export const IMPORT_ACCEPT = ['.txt', '.md', '.mixdock', '.notedock', '.inkdock', '.pdf', 'image/*', '.heic', '.heif', 'text/plain', 'text/markdown', 'application/pdf'].join(',')
 
 export type ImportResult = {
   imported: string[]
@@ -31,7 +31,7 @@ export async function importFiles(projectId: string, dir: string, files: File[],
         const name = opts.fromCamera ? cameraFileName() : prepared.name
         result.imported.push(await createFile(projectId, dir, name, prepared.data))
       } else if (isNoteExt(ext)) {
-        // .notedock / .inkdock（ZIP）はノートのフォルダとして展開する
+        // .mixdock / .notedock（ZIP）はノートのフォルダとして展開する
         result.imported.push(await importNoteZip(projectId, dir, file.name, new Uint8Array(await file.arrayBuffer())))
       } else if (IMPORT_EXTENSIONS.includes(ext)) {
         result.imported.push(await createFile(projectId, dir, file.name, file))

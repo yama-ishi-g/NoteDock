@@ -3,7 +3,7 @@ import { projectFilesDir } from '../formats/project'
 import { setStorage } from '../storage'
 import { MemoryStorage } from '../storage/MemoryStorage'
 import { listChildren, renameEntry } from './files'
-import { cleanupNote, copyNoteFile, createHandwritingNote, createNote, importNoteZip, loadInk, loadInkData, loadNote, saveInk, saveNote, withNoteExt, zipNote } from './notes'
+import { cleanupNote, copyNoteFile, createHandwritingNote, createNote, importNoteZip, loadInk, loadInkData, loadNote, migrateNoteNames, saveInk, saveNote, syncNoteKind, withNoteExt, zipNote } from './notes'
 import { createProject } from './projects'
 
 let storage: MemoryStorage
@@ -19,26 +19,28 @@ const stroke = (id: string) => ({ id, tool: 'pen' as const, color: '#000000', si
 
 describe('withNoteExt', () => {
   it('ノートの拡張子がなければ付け、どちらかが付いていればそのまま', () => {
-    expect(withNoteExt('a')).toBe('a.notedock')
-    expect(withNoteExt('a', 'inkdock')).toBe('a.inkdock')
-    expect(withNoteExt('a.inkdock')).toBe('a.inkdock')
-    expect(withNoteExt('a.notedock', 'inkdock')).toBe('a.notedock')
+    expect(withNoteExt('a')).toBe('a.mixdock')
+    expect(withNoteExt('a', 'notedock')).toBe('a.notedock')
+    expect(withNoteExt('a.notedock')).toBe('a.notedock')
+    expect(withNoteExt('a.mixdock', 'notedock')).toBe('a.mixdock')
   })
 })
 
 describe('手書きノート', () => {
   it('作成すると手書きブロック1つのノートになり、ツリーでは1つのファイルに見える', async () => {
     const path = await createHandwritingNote(pid, '', '図')
-    expect(path).toBe('図.inkdock')
+    expect(path).toBe('図.notedock')
+    expect((await loadNote(pid, path)).kind).toBe('handwriting')
     const note = await loadNote(pid, path)
     expect(note.blocks).toHaveLength(1)
     expect(note.blocks[0]).toMatchObject({ type: 'ink', background: 'grid' })
     expect(await loadInk(pid, path, note.blocks[0].id)).toEqual([])
-    expect((await listChildren(pid, ''))[0]).toMatchObject({ name: '図.inkdock', kind: 'file', fileType: 'inknote' })
-    expect(await createHandwritingNote(pid, '', '図.inkdock')).toBe('図 (2).inkdock')
-    // 混在ノートは .notedock
-    expect(await createNote(pid, '', '図', 'mixed')).toBe('図.notedock')
-    expect((await listChildren(pid, '')).map((n) => n.fileType)).toEqual(['inknote', 'inknote', 'note'])
+    expect((await listChildren(pid, ''))[0]).toMatchObject({ name: '図.notedock', kind: 'file', fileType: 'inknote' })
+    expect(await createHandwritingNote(pid, '', '図.notedock')).toBe('図 (2).notedock')
+    // 混在ノートは .mixdock
+    expect(await createNote(pid, '', '図', 'mixed')).toBe('図.mixdock')
+    expect((await loadNote(pid, '図.mixdock')).kind).toBe('mixed')
+    expect((await listChildren(pid, '')).map((n) => n.fileType)).toEqual(['inknote', 'note', 'inknote'])
   })
 
   it('線を保存すると数値が丸められる', async () => {
@@ -52,7 +54,7 @@ describe('手書きノート', () => {
     const path = await createHandwritingNote(pid, '', '図')
     const id = (await loadNote(pid, path)).blocks[0].id
     await saveInk(pid, path, id, [stroke('a')])
-    const to = await renameEntry(pid, path, '設計図.inkdock')
+    const to = await renameEntry(pid, path, '設計図.notedock')
     expect(await loadInk(pid, to, id)).toHaveLength(1)
   })
 
@@ -65,15 +67,59 @@ describe('手書きノート', () => {
     expect(await storage.exists(`${projectFilesDir(pid)}/${path}/ink/${note.blocks[0].id}.json`)).toBe(true)
   })
 
-  it('.notedock ファイル（ZIP）に書き出して取り込める', async () => {
+  it('ノートのファイル（ZIP）に書き出して取り込める', async () => {
     const path = await createHandwritingNote(pid, '', '図')
     const id = (await loadNote(pid, path)).blocks[0].id
     await saveInk(pid, path, id, [stroke('a'), stroke('b')])
     const zip = await zipNote(pid, path)
-    const imported = await importNoteZip(pid, '', '図.inkdock', zip)
-    expect(imported).toBe('図 (2).inkdock')
+    const imported = await importNoteZip(pid, '', '図.notedock', zip)
+    expect(imported).toBe('図 (2).notedock')
     expect(await loadInk(pid, imported, id)).toHaveLength(2)
     await expect(importNoteZip(pid, '', 'x.notedock', new Uint8Array([1, 2, 3]))).rejects.toThrow()
+  })
+
+  it('以前の拡張子のノートを今の拡張子にそろえる', async () => {
+    const base = projectFilesDir(pid)
+    const legacy = (blocks: unknown[]) => JSON.stringify({ formatVersion: 1, id: 'x', createdAt: '', updatedAt: '', blocks })
+    const ink = { id: 'i', type: 'ink', height: 500, background: 'grid' }
+    const text = { id: 't', type: 'text', markdown: 'a' }
+    // v1.0.0 の混在ノート（.notedock、kind なし）
+    await storage.writeFile(`${base}/会議.notedock/note.json`, legacy([text, ink]))
+    // v1.0.0 の手書きノート（.notedock、手書きブロック1つ、kind なし）
+    await storage.writeFile(`${base}/sub/図.notedock/note.json`, legacy([ink]))
+    // 以前の開発版の手書きノート
+    await storage.writeFile(`${base}/メモ.inkdock/note.json`, legacy([ink]))
+    // 今の形式（手書きノートとして作り、文章を足したもの）は変えない
+    await storage.writeFile(`${base}/新.notedock/note.json`, JSON.stringify({ ...JSON.parse(legacy([ink, text])), kind: 'handwriting' }))
+    const renamed = await migrateNoteNames(pid)
+    expect(renamed.sort()).toEqual([['メモ.inkdock', 'メモ.notedock'], ['会議.notedock', '会議.mixdock']])
+    expect((await loadNote(pid, '会議.mixdock')).kind).toBe('mixed')
+    expect((await loadNote(pid, 'sub/図.notedock')).kind).toBe('handwriting')
+    expect((await loadNote(pid, 'メモ.notedock')).kind).toBe('handwriting')
+    expect((await loadNote(pid, '新.notedock')).kind).toBe('handwriting')
+    // 2回目は何もしない
+    expect(await migrateNoteNames(pid)).toEqual([])
+  })
+
+  it('以前の形式のノートを取り込むと、今の拡張子にそろえる', async () => {
+    const path = await createNote(pid, '', '会議', 'mixed')
+    const zip = await zipNote(pid, path)
+    // kind のない v1.0.0 の混在ノート .notedock として取り込む
+    const { unzipSync, zipSync, strToU8 } = await import('fflate')
+    const files = unzipSync(zip)
+    const meta = JSON.parse(new TextDecoder().decode(files['note.json']))
+    delete meta.kind
+    files['note.json'] = strToU8(JSON.stringify(meta))
+    expect(await importNoteZip(pid, '', '古い.notedock', zipSync(files))).toBe('古い.mixdock')
+    expect((await loadNote(pid, '古い.mixdock')).kind).toBe('mixed')
+  })
+
+  it('拡張子を付け替えたら種類も合わせる', async () => {
+    const path = await createNote(pid, '', '会議', 'mixed')
+    const to = await renameEntry(pid, path, '会議.notedock')
+    await syncNoteKind(pid, to)
+    expect((await loadNote(pid, to)).kind).toBe('handwriting')
+    expect(await migrateNoteNames(pid)).toEqual([])
   })
 
   it('混在ノートは文章ブロック1つから始まる', async () => {
