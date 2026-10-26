@@ -109,7 +109,7 @@ export default function InkToolbar({ state, onChange, canUndo, canRedo, onUndo, 
 
       {onInsertImage && (
         <div className="ink-group">
-          <PressButton className="tool-btn" aria-label="画像を置く" title="画像を置く" onPress={onInsertImage}><ImagePlus size={20} /></PressButton>
+          <PressButton className="tool-btn" aria-label="画像を置く" title="画像を置く" onRelease={onInsertImage}><ImagePlus size={20} /></PressButton>
         </div>
       )}
 
