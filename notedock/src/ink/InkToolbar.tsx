@@ -1,5 +1,5 @@
 import { Circle, Eraser, Grid3x3, Hand, Highlighter, ImagePlus, Lasso, MousePointer2, MoveUpRight, PenLine, RectangleHorizontal, Redo2, Shapes, Square, Type, Undo2 } from 'lucide-react'
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import PressButton from '../components/PressButton'
 import type { InkBackground } from '../formats/notedock'
 import { ERASER_RADII, MARKER_SIZES, PEN_SIZES, PRESET_COLORS, type ShapeKind, type SizeLevel, type Tool } from './model'
@@ -63,6 +63,18 @@ export default function InkToolbar({ state, onChange, canUndo, canRedo, onUndo, 
   const levelKey = tool === 'marker' ? 'markerLevel' : tool === 'eraser' ? 'eraserLevel' : textTool ? 'textLevel' : 'penLevel'
   const showSizes = tool !== 'lasso'
   const barRef = useRef<HTMLDivElement>(null)
+  const shapeRef = useRef<HTMLDivElement>(null)
+  const [shapeMenuOpen, setShapeMenu] = useState(false)
+  // 図形のメニューは、ほかのツールにしたときと、メニューの外に触れたときに閉じる
+  const shapeMenu = shapeMenuOpen && tool === 'shape'
+  useEffect(() => {
+    if (!shapeMenu) return
+    const onDown = (e: PointerEvent) => {
+      if (!shapeRef.current?.contains(e.target as Node)) setShapeMenu(false)
+    }
+    window.addEventListener('pointerdown', onDown, true)
+    return () => window.removeEventListener('pointerdown', onDown, true)
+  }, [shapeMenu])
 
   // Pencil でボタンをタップすると、iPadOS が文字選択・Scribble の始まりかどうかを見極める間（0.数秒）、
   // 次の Pencil の入力を手書き面に渡さない。touchstart を止めて、OS 標準の処理を始めさせない（段階2の実機確認で判明）。
@@ -84,47 +96,58 @@ export default function InkToolbar({ state, onChange, canUndo, canRedo, onUndo, 
   return (
     <div ref={barRef} className="ink-toolbar" role="toolbar" aria-label="手書きツール">
       <div className="ink-group">
-        {TOOLS.map((t) => (
-          <PressButton key={t.tool} className={`tool-btn ${tool === t.tool ? 'on' : ''}`} aria-label={t.label} title={t.label} aria-pressed={tool === t.tool} onPress={() => onChange({ tool: t.tool })}>
-            {t.icon}
+        {TOOLS.map((t) =>
+          t.tool === 'shape' ? (
+            // 図形の種類は、ボタンの下に出す小さなメニューで選ぶ（ツールバーの幅を変えず、右端のボタンが折り返さないようにする）
+            <div key={t.tool} className="shape-tool" ref={shapeRef}>
+              <PressButton className={`tool-btn ${tool === 'shape' ? 'on' : ''}`} aria-label={t.label} title={t.label} aria-pressed={tool === 'shape'} aria-expanded={shapeMenu} onPress={() => {
+                onChange({ tool: 'shape' })
+                setShapeMenu(!shapeMenu)
+              }}>
+                {SHAPES.find((s) => s.kind === state.shapeKind)?.icon ?? t.icon}
+              </PressButton>
+              {shapeMenu && (
+                <div className="shape-menu" role="menu">
+                  {SHAPES.map((s) => (
+                    <PressButton key={s.kind} className={`tool-btn ${state.shapeKind === s.kind ? 'on' : ''}`} role="menuitemradio" aria-label={s.label} title={s.label} aria-checked={state.shapeKind === s.kind} onPress={() => {
+                      onChange({ tool: 'shape', shapeKind: s.kind })
+                      setShapeMenu(false)
+                    }}>
+                      {s.icon}
+                    </PressButton>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : (
+            <PressButton key={t.tool} className={`tool-btn ${tool === t.tool ? 'on' : ''}`} aria-label={t.label} title={t.label} aria-pressed={tool === t.tool} onPress={() => onChange({ tool: t.tool })}>
+              {t.icon}
+            </PressButton>
+          ),
+        )}
+      </div>
+
+      {/* 使わないツールでも場所は残す（ツールを切り替えてもボタンの並び・折り返しが変わらないように） */}
+      <div className={`ink-group ${showSizes ? '' : 'placeholder'}`} aria-hidden={!showSizes}>
+        {sizeDots(tool).map((d, i) => (
+          <PressButton key={i} className={`tool-btn size ${state[levelKey] === i ? 'on' : ''}`} aria-label={(textTool ? ['小', '中', '大'] : ['細', '中', '太'])[i]} title={(textTool ? ['文字 小', '文字 中', '文字 大'] : ['細', '中', '太'])[i]} onPress={() => onChange({ [levelKey]: i as SizeLevel })}>
+            {textTool ? (
+              <span className="size-letter" style={{ fontSize: d, color }}>あ</span>
+            ) : (
+              <span className="size-dot" style={{ width: d, height: d, background: tool === 'eraser' ? 'transparent' : color, borderColor: tool === 'eraser' ? 'currentColor' : color }} />
+            )}
           </PressButton>
         ))}
       </div>
 
-      {tool === 'shape' && (
-        <div className="ink-group">
-          {SHAPES.map((s) => (
-            <PressButton key={s.kind} className={`tool-btn ${state.shapeKind === s.kind ? 'on' : ''}`} aria-label={s.label} title={s.label} aria-pressed={state.shapeKind === s.kind} onPress={() => onChange({ shapeKind: s.kind })}>
-              {s.icon}
-            </PressButton>
-          ))}
-        </div>
-      )}
-
-      {showSizes && (
-        <div className="ink-group">
-          {sizeDots(tool).map((d, i) => (
-            <PressButton key={i} className={`tool-btn size ${state[levelKey] === i ? 'on' : ''}`} aria-label={(textTool ? ['小', '中', '大'] : ['細', '中', '太'])[i]} title={(textTool ? ['文字 小', '文字 中', '文字 大'] : ['細', '中', '太'])[i]} onPress={() => onChange({ [levelKey]: i as SizeLevel })}>
-              {textTool ? (
-                <span className="size-letter" style={{ fontSize: d, color }}>あ</span>
-              ) : (
-                <span className="size-dot" style={{ width: d, height: d, background: tool === 'eraser' ? 'transparent' : color, borderColor: tool === 'eraser' ? 'currentColor' : color }} />
-              )}
-            </PressButton>
-          ))}
-        </div>
-      )}
-
-      {tool !== 'eraser' && (
-        <div className="ink-group colors">
-          {PRESET_COLORS.map((c) => (
-            <PressButton key={c} className={`color-btn ${color === c ? 'on' : ''}`} style={{ background: c }} aria-label={`色 ${c}`} onPress={() => setColor(c)} />
-          ))}
-          <label className={`color-btn custom ${PRESET_COLORS.includes(color as (typeof PRESET_COLORS)[number]) ? '' : 'on'}`} title="ほかの色" style={{ background: PRESET_COLORS.includes(color as (typeof PRESET_COLORS)[number]) ? undefined : color }}>
-            <input type="color" value={color} onChange={(e) => setColor(e.target.value)} aria-label="ほかの色" />
-          </label>
-        </div>
-      )}
+      <div className={`ink-group colors ${tool === 'eraser' ? 'placeholder' : ''}`} aria-hidden={tool === 'eraser'}>
+        {PRESET_COLORS.map((c) => (
+          <PressButton key={c} className={`color-btn ${color === c ? 'on' : ''}`} style={{ background: c }} aria-label={`色 ${c}`} onPress={() => setColor(c)} />
+        ))}
+        <label className={`color-btn custom ${PRESET_COLORS.includes(color as (typeof PRESET_COLORS)[number]) ? '' : 'on'}`} title="ほかの色" style={{ background: PRESET_COLORS.includes(color as (typeof PRESET_COLORS)[number]) ? undefined : color }}>
+          <input type="color" value={color} onChange={(e) => setColor(e.target.value)} aria-label="ほかの色" />
+        </label>
+      </div>
 
       {onInsertImage && (
         <div className="ink-group">

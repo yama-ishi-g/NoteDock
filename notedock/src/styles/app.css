@@ -467,6 +467,22 @@ button {
 .tool-btn.on { background: var(--active); color: var(--active-text); }
 .tool-btn:disabled { opacity: 0.35; cursor: default; }
 .tool-btn.size { min-width: 34px; }
+.ink-group.placeholder { visibility: hidden; pointer-events: none; }
+.shape-tool { position: relative; display: flex; }
+.shape-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 30;
+  display: flex;
+  gap: 2px;
+  padding: 4px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.15);
+}
 .size-dot { display: block; border-radius: 50%; border: 1.5px solid; }
 .finger-label { font-size: 13px; white-space: nowrap; }
 .colors { gap: 4px; }
