@@ -11,7 +11,7 @@ import { hasStrokes } from '../formats/inkSidecar'
 import { loadSidecar } from '../services/annotations'
 import NoteEditor from '../editors/NoteEditor'
 import { createNote, withNoteExt, zipNote } from '../services/notes'
-import { exportNoteMarkdown, preparePrint } from '../io/exportNote'
+import { exportInkNotePdf, exportNoteMarkdown, preparePrint } from '../io/exportNote'
 import { activeEditor } from '../editors/activeEditor'
 import TextEditor, { type MdMode } from '../editors/TextEditor'
 import { importFiles, IMPORT_ACCEPT } from '../io/importFiles'
@@ -327,18 +327,20 @@ export default function ProjectView({ projectId }: { projectId: string }) {
       if (touchesOpenFile(node.path)) await activeEditor.flush()
       // ノートは書き出し方を選んでもらう
       let noteFormat: 'notedock' | 'markdown' | 'pdf' = 'notedock'
+      // 手書きノートは PDF ファイルを直接作る（混在ノートは文章を選択・検索できるよう、印刷画面から保存する）
+      const inkNote = node.fileType === 'inknote'
       if (isNoteType(node.fileType)) {
         const choice = await dialogs.choose({
           title: 'ノートの書き出し方',
           options: [
             { value: 'notedock' as const, label: `.${extname(node.name)} ファイル（NoteDockで開ける）` },
             { value: 'markdown' as const, label: 'Markdown＋画像（ZIP）' },
-            { value: 'pdf' as const, label: 'PDF（印刷画面から保存）' },
+            { value: 'pdf' as const, label: inkNote ? 'PDF（A4）' : 'PDF（印刷画面から保存）' },
           ],
         })
         if (!choice) return
         noteFormat = choice
-        if (choice === 'pdf') {
+        if (choice === 'pdf' && !inkNote) {
           const job = await preparePrint(projectId, node.path)
           // 印刷画面はタップの直後でないと開けないため、もう一度タップしてもらう
           const ok = await dialogs.confirm({ title: '印刷の準備ができました', message: 'iPadでは、印刷画面の共有ボタンから「PDFとして保存」や「"ファイル"に保存」を選べます。', okLabel: '印刷画面を開く' })
@@ -373,7 +375,9 @@ export default function ProjectView({ projectId }: { projectId: string }) {
         : isNoteType(node.fileType)
           ? noteFormat === 'markdown'
             ? await exportNoteMarkdown(projectId, node.path)
-            : makeFile(await zipNote(projectId, node.path), node.name)
+            : noteFormat === 'pdf'
+              ? await exportInkNotePdf(projectId, node.path)
+              : makeFile(await zipNote(projectId, node.path), node.name)
           : node.kind === 'dir'
             ? makeFile(await zipFolder(projectId, node.path), `${node.name}_${dateStamp()}.zip`)
             : makeFile(await readEntry(projectId, node.path), node.name)

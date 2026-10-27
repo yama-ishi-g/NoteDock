@@ -61,10 +61,10 @@ export async function burnImage(projectId: string, path: string, naming: ExportN
  * pdf.js の表示座標（scale 1、ページの回転を反映）→ PDF の座標 への変換行列。
  * drawSvgPath は y を反転する（scale(1, -1)）ため、その分を打ち消した行列にする
  */
-export function viewToPdfMatrix(rotation: number, box: { x: number; y: number; width: number; height: number }): [number, number, number, number, number, number] {
+export function viewToPdfMatrix(rotation: number, box: { x: number; y: number; width: number; height: number }): Matrix {
   const { x, y, width: w, height: h } = box
   // pdf = M * view
-  let m: [number, number, number, number, number, number]
+  let m: Matrix
   switch (((rotation % 360) + 360) % 360) {
     case 90:
       m = [0, 1, 1, 0, x, y]
@@ -89,45 +89,60 @@ async function toJpeg(blob: Blob, bytes: Uint8Array): Promise<Uint8Array> {
   return new Uint8Array(await out.arrayBuffer())
 }
 
+type PdfLib = typeof import('pdf-lib')
+type Matrix = [number, number, number, number, number, number]
+
+/**
+ * PDF のページに、置いたものと線を描く。matrix は論理座標 → PDF の座標（viewToPdfMatrix と同じく y の反転を打ち消したもの）。
+ * before は線より先に描くもの（方眼など。同じ座標系で、y は -y で指定する）
+ */
+export async function drawInkOnPdfPage(
+  lib: PdfLib, pdf: import('pdf-lib').PDFDocument, p: import('pdf-lib').PDFPage, matrix: Matrix,
+  strokes: Stroke[], items: InkItem[], assets: AssetResolver | undefined, before?: () => void,
+) {
+  const { rgb, pushGraphicsState, popGraphicsState, concatTransformationMatrix } = lib
+  p.pushOperators(pushGraphicsState(), concatTransformationMatrix(...matrix))
+  before?.()
+  // 置いたもの（線の下）。この座標系は y が反転しているので、下端 -(y+h) から描く
+  for (const item of items) {
+    try {
+      if (item.type === 'image') {
+        if (!assets) continue
+        const blob = await assets.read(item.src)
+        const bytes = new Uint8Array(await blob.arrayBuffer())
+        const png = bytes[0] === 0x89 && bytes[1] === 0x50
+        const img = png ? await pdf.embedPng(bytes) : await pdf.embedJpg(await toJpeg(blob, bytes))
+        p.drawImage(img, { x: item.x, y: -item.y - item.h, width: item.w, height: item.h })
+      } else {
+        const t = await textItemPng(item)
+        if (!t) continue
+        const img = await pdf.embedPng(t.png)
+        p.drawImage(img, { x: item.x, y: -item.y - t.height, width: item.w, height: t.height })
+      }
+    } catch {
+      // 読めないものは焼き込まない
+    }
+  }
+  for (const s of strokes) {
+    const [r, g, bl] = hexToRgb(s.color)
+    p.drawSvgPath(strokeSvgPath(s), { x: 0, y: 0, color: rgb(r, g, bl), opacity: s.opacity })
+  }
+  p.pushOperators(popGraphicsState())
+}
+
 /** PDF の各ページに書き込みを焼き込む（pdf-lib） */
 export async function burnPdf(projectId: string, path: string, naming: ExportNaming): Promise<File> {
-  const { PDFDocument, rgb, pushGraphicsState, popGraphicsState, concatTransformationMatrix } = await import('pdf-lib')
+  const lib = await import('pdf-lib')
   const file = await readEntry(projectId, path)
   const sidecar: InkSidecar = await loadSidecar(projectId, path, 'pdf-page')
-  const pdf = await PDFDocument.load(await file.arrayBuffer())
+  const pdf = await lib.PDFDocument.load(await file.arrayBuffer())
   const pages = pdf.getPages()
   const assets = sidecarAssets(projectId, path)
   for (const [key, page] of Object.entries(sidecar.pages)) {
     const p = pages[Number(key)]
     const items = page.items ?? []
     if (!p || (!page.strokes.length && !items.length)) continue
-    const box = p.getCropBox()
-    const [a, b, c, d, e, f] = viewToPdfMatrix(p.getRotation().angle, box)
-    p.pushOperators(pushGraphicsState(), concatTransformationMatrix(a, b, c, d, e, f))
-    // 置いたもの（線の下）。この座標系は y が反転しているので、下端 -(y+h) から描く
-    for (const item of items) {
-      try {
-        if (item.type === 'image') {
-          const blob = await assets.read(item.src)
-          const bytes = new Uint8Array(await blob.arrayBuffer())
-          const png = bytes[0] === 0x89 && bytes[1] === 0x50
-          const img = png ? await pdf.embedPng(bytes) : await pdf.embedJpg(await toJpeg(blob, bytes))
-          p.drawImage(img, { x: item.x, y: -item.y - item.h, width: item.w, height: item.h })
-        } else {
-          const t = await textItemPng(item)
-          if (!t) continue
-          const img = await pdf.embedPng(t.png)
-          p.drawImage(img, { x: item.x, y: -item.y - t.height, width: item.w, height: t.height })
-        }
-      } catch {
-        // 読めないものは焼き込まない
-      }
-    }
-    for (const s of page.strokes as Stroke[]) {
-      const [r, g, bl] = hexToRgb(s.color)
-      p.drawSvgPath(strokeSvgPath(s), { x: 0, y: 0, color: rgb(r, g, bl), opacity: s.opacity })
-    }
-    p.pushOperators(popGraphicsState())
+    await drawInkOnPdfPage(lib, pdf, p, viewToPdfMatrix(p.getRotation().angle, p.getCropBox()), page.strokes as Stroke[], items, assets)
   }
   const bytes = await pdf.save()
   return makeFile(bytes, burnedName(path.slice(path.lastIndexOf('/') + 1), 'pdf', naming))

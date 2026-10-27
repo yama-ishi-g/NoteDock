@@ -2,14 +2,14 @@ import { zipSync, type Zippable } from 'fflate'
 import { INK_LOGICAL_WIDTH, type NoteDoc } from '../formats/notedock'
 import { noteAssets, sidecarAssets, type AssetResolver } from '../ink/assets'
 import type { InkItem } from '../ink/items'
-import type { Stroke } from '../ink/model'
+import { rectsIntersect, strokeBounds, type Stroke } from '../ink/model'
 import { strokePath } from '../ink/render'
 import { renderMarkdown } from '../lib/markdown'
 import { loadSidecar } from '../services/annotations'
 import { loadInkData, loadNote, readNoteFile } from '../services/notes'
 import { extname, stem } from '../storage/paths'
 import { toBytes } from '../storage/StorageService'
-import { composeImage } from './burn'
+import { composeImage, drawInkOnPdfPage } from './burn'
 import { drawItems, itemsBottom } from './drawItems'
 import { makeFile } from './share'
 
@@ -76,6 +76,51 @@ async function collectParts(projectId: string, notePath: string, note: NoteDoc):
 }
 
 const noteName = (notePath: string) => stem(notePath.slice(notePath.lastIndexOf('/') + 1))
+
+/** A4 縦（pt） */
+const A4 = { width: 595.28, height: 841.89 }
+const GRID = 25
+
+/** 手書きノートを A4 縦のページに分けるときの、各ページの上端（論理座標） */
+export function inkPdfPageTops(contentHeight: number, pageHeight = (A4.height / A4.width) * INK_LOGICAL_WIDTH): number[] {
+  const n = Math.max(1, Math.ceil(contentHeight / pageHeight - 0.001))
+  return Array.from({ length: n }, (_, i) => i * pageHeight)
+}
+
+/**
+ * 手書きノートを PDF にする（A4 縦。横幅をページの幅に合わせ、縦は描いた所までをページに分ける）。
+ * 線はベクターのまま入れるため、拡大しても粗くならない
+ */
+export async function exportInkNotePdf(projectId: string, notePath: string): Promise<File> {
+  const lib = await import('pdf-lib')
+  const note = await loadNote(projectId, notePath)
+  const block = note.blocks.find((b) => b.type === 'ink')
+  if (!block || block.type !== 'ink') throw new Error('手書きの欄がありません')
+  const { strokes, items } = await loadInkData(projectId, notePath, block.id)
+  const assets = noteAssets(projectId, notePath)
+  const k = A4.width / INK_LOGICAL_WIDTH
+  const pageH = A4.height / k
+  const pdf = await lib.PDFDocument.create()
+  pdf.setTitle(noteName(notePath))
+  pdf.setCreator('NoteDock')
+  const grid = block.background === 'grid'
+  const gridColor = lib.rgb(55 / 255, 138 / 255, 221 / 255)
+  for (const top of inkPdfPageTops(trimmedHeight(strokes, items, block.height), pageH)) {
+    const page = pdf.addPage([A4.width, A4.height])
+    const area = { x: 0, y: top, width: INK_LOGICAL_WIDTH, height: pageH }
+    // ページにかかる線・置いたものだけを入れる（はみ出た部分はページの外なので見えない）
+    const onPage = strokes.filter((s) => rectsIntersect(strokeBounds(s), area))
+    const itemsOnPage = items.filter((i) => i.y < top + pageH && i.y + (i.type === 'image' ? i.h : pageH) > top)
+    const drawGrid = () => {
+      if (!grid) return
+      const opts = { thickness: 0.8, color: gridColor, opacity: 0.13 }
+      for (let x = 0; x <= INK_LOGICAL_WIDTH; x += GRID) page.drawLine({ start: { x, y: -top }, end: { x, y: -top - pageH }, ...opts })
+      for (let y = Math.ceil(top / GRID) * GRID; y <= top + pageH; y += GRID) page.drawLine({ start: { x: 0, y: -y }, end: { x: INK_LOGICAL_WIDTH, y: -y }, ...opts })
+    }
+    await drawInkOnPdfPage(lib, pdf, page, [k, 0, 0, k, 0, A4.height + k * top], onPage, itemsOnPage, assets, drawGrid)
+  }
+  return makeFile(await pdf.save(), `${noteName(notePath)}.pdf`)
+}
 
 /** Markdown＋画像を ZIP にする（ノート名.md と assets/） */
 export async function exportNoteMarkdown(projectId: string, notePath: string): Promise<File> {

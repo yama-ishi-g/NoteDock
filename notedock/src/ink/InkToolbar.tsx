@@ -1,8 +1,8 @@
-import { Eraser, Grid3x3, Hand, Highlighter, ImagePlus, Lasso, MousePointer2, PenLine, Redo2, Square, Type, Undo2 } from 'lucide-react'
+import { Circle, Eraser, Grid3x3, Hand, Highlighter, ImagePlus, Lasso, MousePointer2, MoveUpRight, PenLine, RectangleHorizontal, Redo2, Shapes, Square, Type, Undo2 } from 'lucide-react'
 import { useEffect, useRef } from 'react'
 import PressButton from '../components/PressButton'
 import type { InkBackground } from '../formats/notedock'
-import { ERASER_RADII, MARKER_SIZES, PEN_SIZES, PRESET_COLORS, type SizeLevel, type Tool } from './model'
+import { ERASER_RADII, MARKER_SIZES, PEN_SIZES, PRESET_COLORS, type ShapeKind, type SizeLevel, type Tool } from './model'
 
 export type ToolState = {
   tool: Tool
@@ -13,6 +13,8 @@ export type ToolState = {
   eraserLevel: SizeLevel
   textLevel: SizeLevel
   textColor: string
+  /** 図形ツールで描く図形（色・太さはペンと同じ） */
+  shapeKind: ShapeKind
   finger: boolean
 }
 
@@ -33,9 +35,16 @@ const TOOLS: { tool: Tool; label: string; icon: React.ReactNode }[] = [
   { tool: 'pen', label: 'ペン', icon: <PenLine size={20} /> },
   { tool: 'marker', label: 'マーカー', icon: <Highlighter size={20} /> },
   { tool: 'eraser', label: '消しゴム', icon: <Eraser size={20} /> },
+  { tool: 'shape', label: '図形（円・長方形・矢印）', icon: <Shapes size={20} /> },
   { tool: 'lasso', label: '投げ縄', icon: <Lasso size={20} /> },
   { tool: 'select', label: '選択（画像・テキストを動かす）', icon: <MousePointer2 size={20} /> },
   { tool: 'text', label: 'テキストボックス', icon: <Type size={20} /> },
+]
+
+const SHAPES: { kind: ShapeKind; label: string; icon: React.ReactNode }[] = [
+  { kind: 'ellipse', label: '円', icon: <Circle size={20} /> },
+  { kind: 'rect', label: '長方形', icon: <RectangleHorizontal size={20} /> },
+  { kind: 'arrow', label: '矢印', icon: <MoveUpRight size={20} /> },
 ]
 
 /** 太さの見本（丸の大きさ） */
@@ -81,6 +90,16 @@ export default function InkToolbar({ state, onChange, canUndo, canRedo, onUndo, 
           </PressButton>
         ))}
       </div>
+
+      {tool === 'shape' && (
+        <div className="ink-group">
+          {SHAPES.map((s) => (
+            <PressButton key={s.kind} className={`tool-btn ${state.shapeKind === s.kind ? 'on' : ''}`} aria-label={s.label} title={s.label} aria-pressed={state.shapeKind === s.kind} onPress={() => onChange({ shapeKind: s.kind })}>
+              {s.icon}
+            </PressButton>
+          ))}
+        </div>
+      )}
 
       {showSizes && (
         <div className="ink-group">

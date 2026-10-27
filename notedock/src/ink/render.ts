@@ -7,11 +7,12 @@ function outline(stroke: Stroke, complete: boolean): number[][] {
   const pts: number[][] = []
   for (let i = 0; i < stroke.points.length; i += POINT_STRIDE) pts.push([stroke.points[i], stroke.points[i + 1], stroke.points[i + 2]])
   const marker = stroke.tool === 'marker'
+  const straight = stroke.isLine || !!stroke.shape
   return getStroke(pts, {
     size: stroke.size,
-    thinning: marker || stroke.isLine ? 0 : 0.6,
+    thinning: marker || straight ? 0 : 0.6,
     smoothing: 0.5,
-    streamline: stroke.isLine ? 0 : 0.4,
+    streamline: straight ? 0 : 0.4,
     simulatePressure: false,
     last: complete,
     start: { cap: true },

@@ -1,8 +1,9 @@
 // 手書きのデータ（内部仕様書 5.2）
 
 export type InkTool = 'pen' | 'marker'
-export type Tool = InkTool | 'eraser' | 'lasso' | 'select' | 'text'
+export type Tool = InkTool | 'eraser' | 'lasso' | 'select' | 'text' | 'shape'
 export type SizeLevel = 0 | 1 | 2
+export type ShapeKind = 'ellipse' | 'rect' | 'arrow'
 
 export type Stroke = {
   id: string
@@ -17,6 +18,8 @@ export type Stroke = {
   points: number[]
   /** 直線化した線 */
   isLine?: boolean
+  /** 図形ツールで描いた線（太さを一定にして描く） */
+  shape?: ShapeKind
 }
 
 export type Point = { x: number; y: number }

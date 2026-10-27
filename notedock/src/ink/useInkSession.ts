@@ -12,6 +12,7 @@ export function applyTools(e: InkEngine, t: ToolState) {
   e.penLevel = t.penLevel
   e.markerLevel = t.markerLevel
   e.eraserLevel = t.eraserLevel
+  e.shapeKind = t.shapeKind
 }
 
 export function useInkSession() {
@@ -26,6 +27,7 @@ export function useInkSession() {
     eraserLevel: settings.eraserLevel,
     textLevel: settings.textLevel,
     textColor: settings.textColor,
+    shapeKind: 'ellipse',
     finger: settings.fingerDrawDefault,
   }))
   const engines = useRef(new Map<string, InkEngine>())

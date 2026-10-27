@@ -4,9 +4,10 @@ import type { AssetResolver } from './assets'
 import { fontSizeFor, newImageItem, newTextItem, type InkItem } from './items'
 import {
   ERASER_RADII, MARKER_OPACITY, MARKER_SIZES, newStrokeId, PEN_SIZES, rectsIntersect, unionBounds,
-  type InkTool, type Point, type Rect, type SizeLevel, type Stroke, type Tool,
+  type InkTool, type Point, type Rect, type ShapeKind, type SizeLevel, type Stroke, type Tool,
 } from './model'
 import { cachedBounds, cachedPath, drawStroke, strokePath } from './render'
+import { shapeStrokes } from './shapes'
 
 // 手書き面（内部仕様書 6.1〜6.7）。React に依存しない。
 // 座標は論理座標（手書きブロックは横幅1000）。画面には scale 倍して表示する。
@@ -55,6 +56,8 @@ export type InkEngineOptions = {
 const PALM_MS = 500
 const HOLD_RADIUS_PX = 3
 const MIN_LINE_PX = 20
+/** これより小さい図形（画面上の px）は描かない */
+const MIN_SHAPE_PX = 8
 const GROW_MARGIN = 100
 const INERTIA_FRICTION = 0.9
 const INERTIA_MIN_SPEED = 0.03
@@ -89,6 +92,8 @@ type Gesture =
   /** テキストボックスの編集中に、文字ツールで指が触れた（2本目が来れば指2本の操作、離せばタップとして扱う） */
   | { kind: 'touchWait'; pointerId: number; type: string; down: PointerEvent; start: Point }
   | { kind: 'lasso'; pointerId: number; type: string; polygon: Point[] }
+  /** 図形をドラッグで描く（start から今の位置まで） */
+  | { kind: 'shape'; pointerId: number; type: string; start: Point; strokes: Stroke[] }
   | { kind: 'move'; pointerId: number; type: string; start: Point; dx: number; dy: number }
   | { kind: 'pan'; pointerId: number; last: { x: number; y: number }; samples: { t: number; dx: number; dy: number }[] }
 
@@ -99,6 +104,7 @@ export class InkEngine {
   markerLevel: SizeLevel = 1
   markerColor = '#ef9f27'
   eraserLevel: SizeLevel = 1
+  shapeKind: ShapeKind = 'ellipse'
 
   private host: HTMLElement
   private opts: InkEngineOptions
@@ -546,6 +552,8 @@ export class InkEngine {
           this.setSelection(null)
           this.gesture = { kind: 'lasso', pointerId: e.pointerId, type: e.pointerType, polygon: [p] }
         }
+      } else if (this.tool === 'shape') {
+        this.gesture = { kind: 'shape', pointerId: e.pointerId, type: e.pointerType, start: p, strokes: [] }
       } else {
         const tool = this.tool as InkTool
         const marker = tool === 'marker'
@@ -806,6 +814,13 @@ export class InkEngine {
       case 'lasso':
         for (const ev of list) g.polygon.push(this.toLogical(ev))
         break
+      case 'shape': {
+        const p = this.toLogical(e)
+        // 小さすぎる図形（タップ）は描かない
+        g.strokes = Math.hypot(p.x - g.start.x, p.y - g.start.y) * this.scale < MIN_SHAPE_PX ? [] : shapeStrokes(this.shapeKind, g.start, p, { color: this.color, size: PEN_SIZES[this.penLevel] })
+        this.checkBottom(p.y)
+        break
+      }
       case 'move': {
         const p = this.toLogical(e)
         g.dx = p.x - g.start.x
@@ -839,6 +854,9 @@ export class InkEngine {
         return
       case 'draw':
         this.commit({ strokes: [...this.strokes, g.stroke] })
+        break
+      case 'shape':
+        if (g.strokes.length) this.commit({ strokes: [...this.strokes, ...g.strokes] })
         break
       case 'erase':
         if (g.changed) {
@@ -1007,6 +1025,8 @@ export class InkEngine {
         g.flashUntil = now + 150
       }
       drawStroke(ctx, g.stroke, strokePath(g.stroke, false), now < g.flashUntil ? 0.4 : 1)
+    } else if (g?.kind === 'shape') {
+      for (const st of g.strokes) drawStroke(ctx, st, strokePath(st))
     } else if (g?.kind === 'erase' && g.last) {
       ctx.beginPath()
       ctx.arc(g.last.x, g.last.y, ERASER_RADII[this.eraserLevel], 0, Math.PI * 2)
